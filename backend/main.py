@@ -1,54 +1,36 @@
-import json
-from datetime import datetime
-from typing import List, Dict
+from fastapi import FastAPI
+from backend.api import routes, auth
+from backend.core.database import engine, Base
+import contextlib
 
-class Device:
-    def __init__(self, device_id: str, name: str, device_type: str):
-        self.device_id = device_id
-        self.name = name
-        self.device_type = device_type
-        self.enrollment_date = datetime.now()
-        self.is_active = True
-        self.policies = []
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield
 
-class MDMSystem:
-    def __init__(self):
-        self.devices: Dict[str, Device] = {}
-        self.policies: List[Dict] = []
+app = FastAPI(title="MDM Projeto", lifespan=lifespan)
 
-    def enroll_device(self, device_id: str, name: str, device_type: str) -> Device:
-        device = Device(device_id, name, device_type)
-        self.devices[device_id] = device
-        return device
+from fastapi.middleware.cors import CORSMiddleware
 
-    def remove_device(self, device_id: str) -> bool:
-        if device_id in self.devices:
-            del self.devices[device_id]
-            return True
-        return False
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-    def apply_policy(self, device_id: str, policy: Dict) -> bool:
-        if device_id in self.devices:
-            self.devices[device_id].policies.append(policy)
-            return True
-        return False
-
-    def list_devices(self) -> List[Device]:
-        return list(self.devices.values())
-
-    def get_device(self, device_id: str) -> Device:
-        return self.devices.get(device_id)
+app.include_router(routes.router, prefix="/api")
+app.include_router(auth.router, prefix="/api")
+@app.get("/")
+def root():
+    return {
+        "message": "MDM API - use /api/enroll, /api/devices, /api/devices/{id}/apply_policy, /api/devices/{id}"
+    }
 
 
 if __name__ == "__main__":
-    mdm = MDMSystem()
-    
-    # Exemplo de uso
-    device = mdm.enroll_device("DEV001", "iPhone 12", "iOS")
-    print(f"Device enrolled: {device.name}")
-    
-    policy = {"security": "enabled", "lock_screen": True}
-    mdm.apply_policy("DEV001", policy)
-    
-    for dev in mdm.list_devices():
-        print(f"{dev.name} - {dev.device_type}")
+    import uvicorn
+
+    uvicorn.run("backend.main:app", host="127.0.0.1", port=8000, reload=True)

@@ -1,0 +1,224 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* MDM Admin Panel — Dark Graphite Design System */
+
+@layer base {
+  :root {
+    /* Dark as default */
+    --background: 222 16% 7%;
+    --foreground: 210 30% 92%;
+
+    --card: 220 14% 10%;
+    --card-foreground: 210 30% 92%;
+
+    --popover: 220 14% 10%;
+    --popover-foreground: 210 30% 92%;
+
+    /* Primary — #2563eb */
+    --primary: 221 83% 53%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 13% 15%;
+    --secondary-foreground: 210 30% 80%;
+
+    --muted: 220 13% 13%;
+    --muted-foreground: 215 16% 48%;
+
+    --accent: 221 83% 53%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 13% 17%;
+    --input: 220 13% 15%;
+    --ring: 221 83% 53%;
+
+    --radius: 0.5rem;
+
+    /* Status colors */
+    --status-online: 142 71% 45%;
+    --status-offline: 215 16% 40%;
+    --status-locked: 0 72% 51%;
+    --status-syncing: 38 92% 50%;
+
+    /* Sidebar */
+    --sidebar-background: 222 18% 6%;
+    --sidebar-foreground: 215 16% 65%;
+    --sidebar-primary: 221 83% 53%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 14% 12%;
+    --sidebar-accent-foreground: 210 30% 88%;
+    --sidebar-border: 220 13% 13%;
+    --sidebar-ring: 221 83% 53%;
+
+    /* Gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(221 83% 53%), hsl(221 83% 65%));
+    --gradient-card: linear-gradient(135deg, hsl(220 14% 11%), hsl(220 14% 9%));
+
+    /* Shadows */
+    --shadow-card: 0 1px 3px 0 hsl(0 0% 0% / 0.4), 0 1px 2px -1px hsl(0 0% 0% / 0.4);
+    --shadow-primary: 0 4px 20px -4px hsl(221 83% 53% / 0.35);
+    --shadow-elevated: 0 8px 32px -8px hsl(0 0% 0% / 0.6);
+
+    /* Glow */
+    --glow-primary: 0 0 20px hsl(221 83% 53% / 0.2);
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+  ::-webkit-scrollbar-track {
+    background: hsl(var(--background));
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground));
+  }
+}
+
+@layer components {
+  /* Glass card */
+  .card-glass {
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-card);
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .card-glass:hover {
+    border-color: hsl(var(--border) / 0.8);
+    box-shadow: var(--shadow-elevated);
+  }
+
+  /* Metric card */
+  .metric-card {
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    padding: 1.25rem;
+    transition: border-color 0.2s, transform 0.2s;
+  }
+  .metric-card:hover {
+    border-color: hsl(var(--primary) / 0.4);
+    transform: translateY(-1px);
+  }
+
+  /* Status badge variants */
+  .badge-online {
+    background: hsl(var(--status-online) / 0.15);
+    color: hsl(var(--status-online));
+    border: 1px solid hsl(var(--status-online) / 0.3);
+  }
+  .badge-offline {
+    background: hsl(var(--status-offline) / 0.15);
+    color: hsl(var(--muted-foreground));
+    border: 1px solid hsl(var(--status-offline) / 0.3);
+  }
+  .badge-locked {
+    background: hsl(var(--status-locked) / 0.15);
+    color: hsl(var(--status-locked));
+    border: 1px solid hsl(var(--status-locked) / 0.3);
+  }
+  .badge-syncing {
+    background: hsl(var(--status-syncing) / 0.15);
+    color: hsl(var(--status-syncing));
+    border: 1px solid hsl(var(--status-syncing) / 0.3);
+  }
+
+  /* Pulse dot */
+  .pulse-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .pulse-dot.online {
+    background: hsl(var(--status-online));
+    box-shadow: 0 0 0 0 hsl(var(--status-online) / 0.4);
+    animation: pulse-ring 2s infinite;
+  }
+
+  /* Sidebar active item */
+  .sidebar-item-active {
+    background: hsl(var(--primary) / 0.12);
+    color: hsl(var(--primary));
+    border-left: 2px solid hsl(var(--primary));
+  }
+  .sidebar-item {
+    color: hsl(var(--sidebar-foreground));
+    transition: background 0.15s, color 0.15s;
+  }
+  .sidebar-item:hover {
+    background: hsl(var(--sidebar-accent));
+    color: hsl(var(--sidebar-accent-foreground));
+  }
+}
+
+@layer utilities {
+  .text-gradient-primary {
+    background: var(--gradient-primary);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .glow-primary {
+    box-shadow: var(--glow-primary);
+  }
+}
+
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 hsl(142 71% 45% / 0.4); }
+  70% { box-shadow: 0 0 0 6px hsl(142 71% 45% / 0); }
+  100% { box-shadow: 0 0 0 0 hsl(142 71% 45% / 0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    hsl(var(--muted)) 25%,
+    hsl(var(--muted-foreground) / 0.1) 50%,
+    hsl(var(--muted)) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}

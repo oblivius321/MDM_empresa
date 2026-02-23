@@ -1,0 +1,33 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environments
+.env
+.env.local
+.env.*.local
+
+# Banco de Dados
+*.sqlite3
+*.db
+mdm_database.db
+
+# Node / Frontend
+frontend/node_modules/
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Logs e VSCode
+*.log
+.vscode/
+.idea/
+
+# OS generated files
+.DS_Store
+Thumbs.db
