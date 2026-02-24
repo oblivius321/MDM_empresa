@@ -1,5 +1,5 @@
 <h1 align="center">
-  <img src="./assets/elion-logo.png" alt="Elion MDM Enterprise Logo" width="300" />
+  <img src="./assets/elion-logo-removebg-preview.png" alt="Elion MDM Enterprise Logo" width="300" />
 </h1>
 
 <p align="center">
