@@ -4,8 +4,7 @@ from typing import Optional
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 
-# Chave secreta super segura (mudar em propução para env!)
-SECRET_KEY = "elion-mdm-secret-key-enterprise-edition-2026"
+from backend.core.config import SECRET_KEY
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 7 Dias logado
 

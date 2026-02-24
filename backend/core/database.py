@@ -2,7 +2,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.orm import DeclarativeBase
 from typing import AsyncGenerator
 
-DATABASE_URL = "sqlite+aiosqlite:///./mdm_database.db"
+from backend.core.config import DATABASE_URL
 
 engine = create_async_engine(DATABASE_URL, echo=True)
 

@@ -14,7 +14,7 @@ export const api = axios.create({
 
 // Request interceptor — attach JWT token if available
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('mdm_token');
+  const token = localStorage.getItem('auth_token');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -26,7 +26,7 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('mdm_token');
+      localStorage.removeItem('auth_token');
       // Could redirect to login here if needed
     }
     return Promise.reject(error);

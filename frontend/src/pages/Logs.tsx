@@ -1,16 +1,16 @@
+import { useState, useEffect } from 'react';
 import { TopBar } from '@/components/TopBar';
-import { FileText, Filter, Download } from 'lucide-react';
+import { FileText, Filter, Download, Loader2 } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 
-const MOCK_LOGS = [
-  { id: 1, level: 'info', message: 'Dispositivo Samsung A14 sincronizado com sucesso', device: 'device_001', time: '10:45:23' },
-  { id: 2, level: 'warning', message: 'Dispositivo Motorola G32 offline há 2 horas', device: 'device_002', time: '10:32:11' },
-  { id: 3, level: 'error', message: 'Falha ao aplicar política de senha em Xiaomi Redmi', device: 'device_003', time: '10:15:47' },
-  { id: 4, level: 'info', message: 'Check-in automático — Samsung A54', device: 'device_004', time: '09:58:02' },
-  { id: 5, level: 'info', message: 'Política VPN aplicada com sucesso', device: 'device_001', time: '09:45:30' },
-  { id: 6, level: 'warning', message: 'Bateria crítica detectada em Motorola G22', device: 'device_005', time: '09:30:15' },
-  { id: 7, level: 'error', message: 'Falha de autenticação — tentativas excedidas', device: 'device_006', time: '09:12:08' },
-  { id: 8, level: 'info', message: 'Novo dispositivo registrado: Redmi Note 12', device: 'device_007', time: '08:55:44' },
-];
+// Tipagem real baseada na estrutura de logs
+interface LogEntry {
+  id: number;
+  level: string;
+  message: string;
+  device: string;
+  time: string;
+}
 
 const levelConfig = {
   info: { color: 'text-primary', bg: 'bg-primary/10 border-primary/20', dot: 'bg-primary' },
@@ -19,6 +19,42 @@ const levelConfig = {
 };
 
 export default function Logs() {
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const { toast } = useToast();
+
+  useEffect(() => {
+    const fetchLogs = async () => {
+      try {
+        const token = localStorage.getItem('auth_token');
+        // TODO: Ajustar a rota `/api/logs` quando criarmos ela no Backend
+        const response = await fetch("http://127.0.0.1:8000/api/logs", {
+          headers: {
+            "Authorization": `Bearer ${token}`
+          }
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setLogs(data);
+        } else {
+          // Se a API retornar erro ou não encontrar a rota (porque ainda não criamos), deixa vazio
+          setLogs([]);
+        }
+      } catch (error) {
+        toast({
+          title: 'Erro de Conexão',
+          description: 'Não foi possível buscar os logs em tempo real.',
+          variant: 'destructive',
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchLogs();
+  }, [toast]);
+
   return (
     <div className="animate-fade-in">
       <TopBar title="Logs do Sistema" subtitle="Histórico de eventos e auditoria" />
@@ -45,23 +81,35 @@ export default function Logs() {
           <div className="px-5 py-4 border-b border-border flex items-center gap-2">
             <FileText className="w-4 h-4 text-primary" />
             <h3 className="text-sm font-semibold text-foreground">Eventos Recentes</h3>
-            <span className="ml-auto text-xs text-muted-foreground">Conecte ao endpoint <code className="font-mono bg-muted px-1 rounded">/logs</code> para dados reais</span>
           </div>
           <div className="divide-y divide-border/50">
-            {MOCK_LOGS.map((log) => {
-              const conf = levelConfig[log.level as keyof typeof levelConfig];
-              return (
-                <div key={log.id} className="flex items-start gap-4 px-5 py-3.5 hover:bg-muted/20 transition-colors">
-                  <span className="text-xs text-muted-foreground font-mono mt-0.5 w-16 flex-shrink-0">{log.time}</span>
-                  <span className={`flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full border flex-shrink-0 ${conf.bg} ${conf.color}`}>
-                    <span className={`w-1.5 h-1.5 rounded-full ${conf.dot}`} />
-                    {log.level.toUpperCase()}
-                  </span>
-                  <p className="text-sm text-foreground flex-1">{log.message}</p>
-                  <span className="text-xs text-muted-foreground font-mono flex-shrink-0">{log.device}</span>
-                </div>
-              );
-            })}
+            {loading ? (
+              <div className="px-5 py-8 flex flex-col items-center justify-center text-muted-foreground">
+                <Loader2 className="w-6 h-6 animate-spin mb-2" />
+                <span className="text-sm font-medium">Sincronizando logs com os servidores...</span>
+              </div>
+            ) : logs.length > 0 ? (
+              logs.map((log) => {
+                const conf = levelConfig[log.level as keyof typeof levelConfig] || levelConfig.info;
+                return (
+                  <div key={log.id} className="flex items-start gap-4 px-5 py-3.5 hover:bg-muted/20 transition-colors">
+                    <span className="text-xs text-muted-foreground font-mono mt-0.5 w-16 flex-shrink-0">{log.time}</span>
+                    <span className={`flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full border flex-shrink-0 ${conf.bg} ${conf.color}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${conf.dot}`} />
+                      {log.level.toUpperCase()}
+                    </span>
+                    <p className="text-sm text-foreground flex-1">{log.message}</p>
+                    <span className="text-xs text-muted-foreground font-mono flex-shrink-0">{log.device}</span>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="px-5 py-10 flex flex-col items-center justify-center text-muted-foreground">
+                <FileText className="w-10 h-10 mb-3 opacity-20" />
+                <span className="text-sm font-medium">Nenhum evento registrado.</span>
+                <span className="text-xs opacity-70 mt-1">Os logs oficiais da empresa aparecerão aqui a medida que os aparelhos sincronizarem.</span>
+              </div>
+            )}
           </div>
         </div>
       </div>
