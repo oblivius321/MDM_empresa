@@ -1,6 +1,11 @@
 import sqlite3
 import os
 
+print("AVISO: Este script foi feito especificamente para migrar o banco SQLite antigo.")
+print("Se você está usando PostgreSQL, NÃO PRECISA RODAR ESTE SCRIPT.")
+print("Com PostgreSQL, as tabelas com as colunas certas já são criadas automaticamente pela api ao iniciar.")
+
+
 db_path = "mdm_database.db"
 if os.path.exists(db_path):
     conn = sqlite3.connect(db_path)

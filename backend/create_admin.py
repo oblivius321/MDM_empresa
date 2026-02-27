@@ -30,7 +30,7 @@ async def create_first_admin(email: str, password: str):
             is_active=True
         )
         await repo.create(admin)
-        print(f"SUCESSO: Administrador '{email}' criado com as senhas criptografadas bcrypt no Banco SQLite.")
+        print(f"SUCESSO: Administrador '{email}' criado com as senhas criptografadas bcrypt no Banco de Dados.")
         print("Agora você já pode autorizar novos analistas pelo Frontend usando essas credenciais!")
 
 if __name__ == "__main__":

@@ -29,7 +29,7 @@ export default function Login() {
         const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 segundos de limite
 
         try {
-            const response = await fetch("http://127.0.0.1:8000/api/auth/login", {
+            const response = await fetch(`http://${window.location.hostname}:8000/api/auth/login`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ email, password }),
@@ -92,7 +92,7 @@ export default function Login() {
         setLoading(true);
 
         try {
-            const response = await fetch("http://127.0.0.1:8000/api/auth/register", {
+            const response = await fetch(`http://${window.location.hostname}:8000/api/auth/register`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
