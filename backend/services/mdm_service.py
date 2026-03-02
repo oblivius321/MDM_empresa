@@ -30,11 +30,30 @@ class MDMService:
         return await self.repo.remove(device_id)
 
     async def apply_policy(self, device_id: str, policy_data: Dict) -> bool:
+        # Create policy
         policy = await self.repo.add_policy(device_id, policy_data)
-        return policy is not None
+        if policy:
+             # Queue a command so device pulls the new policy
+             await self.repo.add_command(device_id, "apply_policy", payload=policy_data)
+             return True
+        return False
+
+    async def wipe_device(self, device_id: str) -> bool:
+        device = await self.repo.get(device_id)
+        if not device:
+             return False
+        await self.repo.add_command(device_id, "wipe_device")
+        await self.repo.update_device(device_id, {"status": "locked"})
+        return True
+
+    async def get_pending_commands(self, device_id: str):
+        return await self.repo.get_pending_commands(device_id)
 
     async def list_devices(self) -> List[Device]:
         return await self.repo.list()
 
     async def get_device(self, device_id: str) -> Optional[Device]:
         return await self.repo.get(device_id)
+
+    async def list_policies(self) -> List[Policy]:
+        return await self.repo.list_policies()

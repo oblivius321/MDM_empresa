@@ -168,6 +168,18 @@ export default function DeviceDetail() {
               loading={actionLoading}
               onClick={() => runAction('lock')}
             />
+            <ActionButton
+              label="Wipe"
+              icon={AlertCircle}
+              action="wipe"
+              variant="danger"
+              loading={actionLoading}
+              onClick={() => {
+                if (window.confirm('Tem certeza que deseja apagar (Factory Reset) este dispositivo?')) {
+                  runAction('wipe');
+                }
+              }}
+            />
           </div>
         </div>
 
@@ -272,7 +284,7 @@ export default function DeviceDetail() {
                       <div className={cn(
                         'w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0',
                         event.severity === 'error' ? 'bg-status-locked' :
-                        event.severity === 'warning' ? 'bg-status-syncing' : 'bg-status-online'
+                          event.severity === 'warning' ? 'bg-status-syncing' : 'bg-status-online'
                       )} />
                       <div className="min-w-0">
                         <p className="text-xs text-foreground">{event.message}</p>

@@ -28,7 +28,7 @@ export default function Logs() {
       try {
         const token = localStorage.getItem('auth_token');
         // TODO: Ajustar a rota `/api/logs` quando criarmos ela no Backend
-        const response = await fetch("http://127.0.0.1:8000/api/logs", {
+        const response = await fetch(`http://${window.location.hostname}:8000/api/logs`, {
           headers: {
             "Authorization": `Bearer ${token}`
           }
@@ -36,7 +36,8 @@ export default function Logs() {
 
         if (response.ok) {
           const data = await response.json();
-          setLogs(data);
+          // Adjust in case logs come wrapped in an object or array
+          setLogs(Array.isArray(data) ? data : data.items || []);
         } else {
           // Se a API retornar erro ou não encontrar a rota (porque ainda não criamos), deixa vazio
           setLogs([]);
@@ -89,17 +90,18 @@ export default function Logs() {
                 <span className="text-sm font-medium">Sincronizando logs com os servidores...</span>
               </div>
             ) : logs.length > 0 ? (
-              logs.map((log) => {
-                const conf = levelConfig[log.level as keyof typeof levelConfig] || levelConfig.info;
+              logs.map((log: any) => {
+                const level = log.level || log.severity || 'info';
+                const conf = levelConfig[level.toLowerCase() as keyof typeof levelConfig] || levelConfig.info;
                 return (
                   <div key={log.id} className="flex items-start gap-4 px-5 py-3.5 hover:bg-muted/20 transition-colors">
-                    <span className="text-xs text-muted-foreground font-mono mt-0.5 w-16 flex-shrink-0">{log.time}</span>
+                    <span className="text-xs text-muted-foreground font-mono mt-0.5 w-16 flex-shrink-0">{log.time || log.timestamp || 'N/A'}</span>
                     <span className={`flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full border flex-shrink-0 ${conf.bg} ${conf.color}`}>
                       <span className={`w-1.5 h-1.5 rounded-full ${conf.dot}`} />
-                      {log.level.toUpperCase()}
+                      {level.toUpperCase()}
                     </span>
                     <p className="text-sm text-foreground flex-1">{log.message}</p>
-                    <span className="text-xs text-muted-foreground font-mono flex-shrink-0">{log.device}</span>
+                    <span className="text-xs text-muted-foreground font-mono flex-shrink-0">{log.device || log.device_id || 'System'}</span>
                   </div>
                 );
               })

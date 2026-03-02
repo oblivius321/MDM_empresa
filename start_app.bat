@@ -2,7 +2,7 @@
 echo Iniciando MDM System...
 
 :: Inicia o Backend em uma nova janela
-start "MDM Backend (Porta 8000)" cmd /k "title MDM Backend && .venv\Scripts\activate && python -m uvicorn backend.main:app --reload"
+start "MDM Backend (Porta 8000)" cmd /k "title MDM Backend && .venv\Scripts\activate && python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload"
 
 :: Verifica se npm existe antes de tentar iniciar o frontend
 where npm >nul 2>nul

@@ -60,13 +60,45 @@ class DeviceRepository:
         return True
 
     async def add_policy(self, device_id: str, policy_data: dict) -> Optional[Policy]:
-        # We need the local device_id (string) to find user, but Policy stores string FK?
-        # Device model has device_id (string) as unique index.
-        # Policy model uses device_id (string) as FK.
-        # This is correct.
-        
-        policy = Policy(device_id=device_id, policy_data=policy_data)
+        policy = Policy(
+            device_id=device_id,
+            name=policy_data.get("name", "Default Policy"),
+            type=policy_data.get("type", "security"),
+            camera_disabled=policy_data.get("camera_disabled", False),
+            install_unknown_sources=policy_data.get("install_unknown_sources", False),
+            factory_reset_disabled=policy_data.get("factory_reset_disabled", False),
+            kiosk_mode=policy_data.get("kiosk_mode", None),
+            policy_data=policy_data.get("policy_data", {})
+        )
         self.db.add(policy)
         await self.db.commit()
         await self.db.refresh(policy)
         return policy
+
+    async def list_policies(self) -> List[Policy]:
+        result = await self.db.execute(select(Policy))
+        return result.scalars().all()
+
+    async def add_command(self, device_id: str, command: str, payload: dict = None) -> "CommandQueue":
+        from backend.models.policy import CommandQueue
+        cmd = CommandQueue(device_id=device_id, command=command, payload=payload or {}, status="pending")
+        self.db.add(cmd)
+        await self.db.commit()
+        await self.db.refresh(cmd)
+        return cmd
+
+    async def get_pending_commands(self, device_id: str) -> List["CommandQueue"]:
+        from backend.models.policy import CommandQueue
+        result = await self.db.execute(
+            select(CommandQueue).where(
+                CommandQueue.device_id == device_id,
+                CommandQueue.status == "pending"
+            ).order_by(CommandQueue.created_at.asc())
+        )
+        commands = result.scalars().all()
+        # Mark as delivered
+        for c in commands:
+            c.status = "delivered"
+        if commands:
+            await self.db.commit()
+        return commands

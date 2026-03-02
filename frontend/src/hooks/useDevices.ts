@@ -111,7 +111,7 @@ export function useDevice(id: string) {
     if (id) fetchDevice();
   }, [fetchDevice, id]);
 
-  const runAction = async (action: 'lock' | 'reboot' | 'sync') => {
+  const runAction = async (action: 'lock' | 'reboot' | 'sync' | 'wipe') => {
     setActionLoading(action);
     setActionResult(null);
     try {

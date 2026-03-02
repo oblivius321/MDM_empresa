@@ -6,6 +6,12 @@ from datetime import datetime
 class PolicyBase(BaseModel):
     name: str = "Default Policy"
     type: str = "security"
+    
+    camera_disabled: bool = False
+    install_unknown_sources: bool = False
+    factory_reset_disabled: bool = False
+    kiosk_mode: Optional[str] = None
+    
     policy_data: Dict = {}
 
 
@@ -18,7 +24,25 @@ class Policy(BaseModel):
     name: str
     type: str
     status: Optional[str] = "applied"
+    
+    camera_disabled: bool = False
+    install_unknown_sources: bool = False
+    factory_reset_disabled: bool = False
+    kiosk_mode: Optional[str] = None
+
     applied_at: Optional[datetime] = Field(None, alias="created_at")
+    
+    @field_validator('id', mode='before')
+    def int_to_str(cls, v):
+        return str(v)
+    
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+
+class CommandResponse(BaseModel):
+    id: str
+    command: str
+    payload: Optional[Dict] = None
     
     @field_validator('id', mode='before')
     def int_to_str(cls, v):

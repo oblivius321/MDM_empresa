@@ -3,103 +3,122 @@
 </h1>
 
 <p align="center">
-  <img alt="GitHub language count" src="https://img.shields.io/github/languages/count/seu-usuario/elion-mdm-enterprise">
-  <img alt="Repository size" src="https://img.shields.io/github/repo-size/seu-usuario/elion-mdm-enterprise">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-brightgreen">
   <img alt="Python version" src="https://img.shields.io/badge/python-3.10+-blue.svg">
   <img alt="React version" src="https://img.shields.io/badge/react-18.x-blue.svg">
+  <img alt="Kotlin version" src="https://img.shields.io/badge/kotlin-1.9+-purple.svg">
 </p>
 
-<p align="center">
-  <strong>Solução de Gerenciamento de Dispositivos Móveis (MDM) baseada na arquitetura Android Enterprise.</strong>
-</p>
+# Elion MDM Enterprise - Master Data Management & Device Control
 
-## 📖 Visão Geral
-
-O **MDM Enterprise** é uma plataforma Full-Stack de gerenciamento de frotas de dispositivos Android focada em segurança corporativa (Device Owner). O projeto adota uma arquitetura em camadas e filas assíncronas para garantir **desacoplamento**, **escalabilidade** e **previsibilidade** na comunicação entre o portal administrativo e as dezenas ou milhares de dispositivos-cliente.
-
-Este projeto demonstra fluência nos seguintes conceitos de engenharia de software corporativa:
-- **Segurança & Políticas Restritivas** (Implementação baseada em Zero-Trust e JWT por dispositivo).
-- **Enfileiramento de Comandos (Command Dispatcher)** em detrimento de requisições síncronas para comunicação com dispositivos.
-- **RESTful API Design**, fortemente tipada e validada.
-- **Ecossistema Assíncrono** (I/O non-blocking no Backend com FastAPI + aiosqlite).
+Uma solução completa e *Full-Stack* de Gerenciamento de Dispositivos Móveis (MDM), focada em segurança corporativa e controle total de frotas Android. Construída com uma arquitetura moderna para fornecer um painel centralizado de onde gestores de TI podem aplicar políticas restritivas, bloquear aparelhos perdidos e monitorar inventários em tempo real.
 
 ---
 
-## 🏗️ Decisões Arquiteturais e Stack
+## 📖 Visão Geral do Projeto
 
-A escolha do stack tecnológico não foi acidental. Priorizou-se a manutenibilidade, a tipagem estrita (tanto no Front quanto no Back) e o isolamento das regras de negócio.
+O **Elion MDM** soluciona as principais dores de uma operação corporativa: Segurança da Informação, Controle de Utilização Externa e Auditoria (Inventário). 
 
-### Backend (Core Server) - `Python & FastAPI`
-- **FastAPI**: Escolhido pelo processamento assíncrono nativo (ASGI), validação embutida baseada em Tipagem Pydantic, e geração automática de documentação OpenAPI.
-- **Arquitetura Service/Repository**: O código está estritamente dividido. *Controllers* (Rotas) apenas interagem com a camada HTTP. As regras de negócio vitais do MDM ficam no *Service Layer*, que por sua vez solicita dados abstratos ao *Repository*.
-- **Pydantic**: Previne que *payloads* malformados vindos dos dispositivos corrompam o sistema.
-- **SQLite + SQLAlchemy (Async)**: Configurado em assíncrono para garantir rápida absorção de milhares de chamadas de *Heartbeat* e transações de banco atômicas.
+O sistema é formado por três grandes camadas tecnológicas interconectadas:
 
-### Frontend (Admin Dashboard) - `React & TypeScript`
-- **Vite & React 18**: Ferramentas modernas que evitam o overhead histórico do CRA, garantindo *Builds* de microssegundos em desenvolvimento.
-- **Tailwind CSS + Shadcn UI (Headless UI)**: Para garantir que o estilo não fique espalhado em centenas de arquivos CSS difíceis de manter. O uso de Headless Components (Radix) foca a atenção na lógica, com acessibilidade nativa (A11y).
-- **TanStack Query (React Query)**: Responsável pelo *caching* inteligente, *retries*, e estado assíncrono das tabelas, removendo a necessidade de middlewares verbosos de estado global (como Redux Thunk).
+1. **Admin Dashboard (Frontend):** Interface web rica e intuitiva para o gestor visualizar a frota, impor regras e despachar comandos de emergência (Wipe/Lock).
+2. **Core Server (Backend):** A API principal responsável pela orquestração do banco de dados, gestão do enfileiramento de comandos e autenticação.
+3. **Elion DPC (Android Device Policy Controller):** O "Agente" embutido nos celulares e tablets da corporação. Ele detém privilégios a nível de Sistema Operacional (Device Admin) para forçar o aparelho a obeceder as regras vindas do Backend.
 
 ---
 
-## ⚙️ Arquitetura de Comunicação (Device & Server)
+## 🏗️ Stack Tecnológico e Componentes
 
-Em um cenário MDM, não podemos confiar que a internet móvel do dispositivo seja estável. Por isso adotamos um **Design baseado em Heartbeat e Filas (Command Queue Pattern)**:
+### 1. Frontend Web (Interface do Gestor)
+- **Ecossistema:** React 18 + TypeScript empacotado pelo Vite (garantindo carregamentos quase instantâneos).
+- **Design & UI:** Tailwind CSS puro e simplificado, alinhado com padrões minimalistas de UI (Headless UI components + Radix/Shadcn), visando usabilidade.
+- **Principais Componentes:**
+  - **Dashboard:** Métricas analíticas do sistema.
+  - **Painel de Dispositivos:** Lista visual com status real (Online, Offline, Bloqueado). Detalhes ricos como IMEI, nível de bateria e fabricante.
+  - **Motor de Políticas:** Capacidade de acionar *Camera Disabled*, *Kiosk Mode*, *Factory Reset* restrito, e proibir instalação de apps fora da loja.
+  - **Botões de Resposta Rápida (C2):** Comandos em 1-clique para Lock (Bloqueio remoto), Reboot e **Wipe (Apagar aparelho de fábrica)** em cenários de roubo.
 
-1. **Enrollment**: O dispositivo solicita pareamento enviando suas chaves biométricas/hardware e recebe um Token JWT de autenticação com limite de escopo.
-2. **Heartbeat Inteligente**: Para evitar DDoS autoinfligido, o Device envia sinalizações espaçadas (Battery, Rede, Status de Kiosk) sem manter um Websocket ativo despensioso.
-3. **Queue Assíncrona**: O operador no Frontend que pede o "Wipe" do dispositivo não manda o comando direto. O Backend armazena na Tabela `commands` com a flag `pending`. No próximo `Heartbeat`, o dispositivo "puxa" os comandos pendentes.
+### 2. Backend API (Cérebro do MDM)
+- **Framework:** Python com **FastAPI** (Excelente performance em I/O assíncrono).
+- **Banco de Dados:** Atualmente em **SQLite** com **SQLAlchemy**, operando de forma assíncrona. Padrão modelado para migração 1:1 para PostgreSQL no futuro via Alembic.
+- **Padrão de Arquitetura (Service/Repository):** 
+  - Controllers/Rotas isoladas que filtram requisições REST web.
+  - Serviços contendo as pesadas regras de negócio e validações Pydantic.
+  - Repositórios com as consultas limpas ao Banco de Dados.
+- **Padrão de Enfileiramento (Command Queue):** Todo botão "Wipe" ou "Lock" apertado no Front gera uma *Queue* no banco. A arquitetura de fila suporta as oscilações naturais da internet móvel 4G/5G, garantindo o envio ponta a ponta quando o dispositivo estiver ativo.
+
+### 3. Android DPC (Módulo Mobile em Kotlin)
+Desenvolvido via linguagem raiz nativa **Kotlin**. Este App (Agente Invisível) se apodera da `DevicePolicyManager` para operar abaixo do nível dos apps comuns. 
+- **`ElionAdminReceiver`:** Observador nativo. Identifica tentativas de quebra de senha na tela de bloqueio e reporta se o Agente for removido.
+- **`PolicyManager`:** Módulo utilitário capaz de invocar funções cruciais do Android como `setCameraDisabled()`, forçar modo quiosque/App único via `startLockTask()` e triturar dados forçando um *Hard Reset* via `wipeData()`.
+- **`InventoryManager`:** Varredor silencioso que acessa `BatteryManager` e `PackageManager` para levantar a Saúde Física e Digital da máquina (Nível de bateria %, espaço em disco e lista de apps instalados).
+- **`FirebaseMessagingService`:** Canal de Comando e Controle (C2). Um *Listener* push de baixo consumo de bateria que reage aos sinais WebSocket do ecossistema do servidor.
 
 ---
 
-## 🚀 Como Rodar Localmente
+## 🚀 Como Rodar o Projeto na sua Máquina
 
-Certifique-se de que possui `Python 3.10+` e `Node.js 18+`.
+### Pré-requisitos Básicos
+- **Python** `3.10+` instalado.
+- **Node.js** `18+` (com npm).
+- (Opcional) **Android Studio** atualizado para compilar o APK nativo.
 
-### 1. Iniciar o Core Backend
+### Passo 1: Iniciando a API (Backend)
+Abra o seu terminal na raiz do projeto:
 
 ```bash
-# Navegue até o root do projeto
+# Navegue até a pasta do backend
+cd backend
+
+# Crie um ambiente virtual isolado Python
 python -m venv .venv
 
-# Ative o ambiente (*Nix/Mac)
-source .venv/bin/activate
-# Ative o ambiente (Windows)
-.\.venv\Scripts\Activate.ps1
+# Ative o ambiente virtual - Exemplo no Windows (Powershell):
+.\.venv\Scripts\activate
+# Ou no Mac/Linux:
+# source .venv/bin/activate
 
-# Instale as dependências
+# Instale os requerimentos do projeto
 pip install -r requirements.txt
 
-# (Opcional) Inicialize os Schemas do Banco de Dados
-python backend/migrate.py
-
-# Inicie o Servidor Asíncrono
-python -m uvicorn backend.main:app --reload
+# Suba a API FastAPI (Na porta 8000)
+python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
-A Healthcheck API e Swagger docs estarão em `http://localhost:8000/docs`.
+*(Documentação Swagger da API rodando em: `http://localhost:8000/docs`)*
 
-### 2. Iniciar o Admin Frontend
-
-Abra um novo terminal pane.
+### Passo 2: Iniciando o Painel do Gestor (Frontend)
+Abra uma **nova** janela/aba no seu Terminal:
 
 ```bash
+# Na base do projeto, navegue para o Frontend
 cd frontend
+
+# Instale os pacotes NPM
 npm install
+
+# Suba o servidor SPA React (Vite)
 npm run dev
 ```
+*(O Sistema Frontend Web rodará em: `http://localhost:5173`)*
 
-A interface estará acessível via `http://localhost:5173`. Para testar integrações sem abrir os dois componentes manualmente, utilize o script encurtador `start_app.bat` na raiz (Windows).
-
----
-
-## 🔒 Considerações Futuras para Produção (Roadmap)
-- [ ] Integrar com **Google Cloud Pub/Sub** e oficializar a subscrição no painel Google Android Management API.
-- [ ] Alterar DSN do banco de dados para instâncias maduras baseadas em **PostgreSQL**.
-- [ ] Injetar **Redis** para a fila em memória (Substituir processamento da fila via banco relacional pelo Redis, removendo gargalos de Lock de Tabelas na leitura em massa do Heartbeat).
+### Passo 3: O Dispositivo Android
+1. Abra o **Android Studio** e importe apenas a pasta `android/`.
+2. Aguarde o *Gradle Sync* (já foi otimizado para não congelar o PC com build paralelo e caching de módulos independentes no arquivo `gradle.properties`).
+3. Compile o aplicativo para um emulador.
+4. Conceda privilégios de **Administrador do Dispositivo** manuais na aba e painel de *Segurança* e *Privacidade* das configurações Android do celular, referenciando o `Elion MDM DPC`.
 
 ---
 
+## 🔒 Roadmap e Melhorias Arquiteturais
+
+A arquitetura atual serve muito bem como MDM Standalone, mas o plano a longo prazo aponta para integrações Cloud State-of-Art:
+
+- [ ] **Integração Plena Firebase (FCM):** Fechar o ciclo do C2 Push Notification para Android, enviando o Payload exato e imediato gerado pelo Python para acordar o smartphone via rede móvel desligada.
+- [ ] **Migração Oficial Android Enterprise (AMAPI):** Promover o agente DPC baseado em Admin Receivers *Legacy* para o ecosistema em nuvem moderno da "Android Management API" em infraestrutura serverless da Google.
+- [ ] **Geolocalização (Tracking):** Implementação de telemetria GPS e renderização em interface Web baseada em OpenStreetMaps/Leaflet.
+- [ ] **RabbitMQ / Redis:** Adicionar camada de Pub/Sub na nuvem para tirar a sobrecarga de Command Queueing do banco relacional principal.
+
+---
 <p align="center">
-  Desenvolvido com foco em escalabilidade corporativa e padrões de arquitetura de software limpa.
+  <i>Construído sob fundamentos rígidos de Engenharia de Software Moderna.</i>
 </p>

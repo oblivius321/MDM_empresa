@@ -97,37 +97,78 @@ async def lock_device(device_id: str, service: MDMService = Depends(get_service)
 
 
 @router.post("/devices/{device_id}/reboot")
-async def reboot_device(device_id: str):
-    return {"status": "command_sent", "command": "reboot"}
+async def reboot_device(device_id: str, service: MDMService = Depends(get_service)):
+    # Since we added command queues, let's use it for reboot too
+    ok = await service.repo.add_command(device_id, "reboot_device")
+    if not ok:
+        raise HTTPException(status_code=404, detail="Device not found")
+    return {"status": "command_sent", "command": "reboot_device"}
+
+@router.post("/devices/{device_id}/wipe")
+async def wipe_device(device_id: str, service: MDMService = Depends(get_service)):
+    ok = await service.wipe_device(device_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Device not found")
+    return {"status": "command_sent", "command": "wipe_device"}
 
 
 @router.post("/devices/{device_id}/sync")
 async def sync_device(device_id: str, service: MDMService = Depends(get_service)):
     await service.update_device(device_id, {"last_checkin": datetime.datetime.utcnow(), "status": "online"})
-    return {"status": "synced"}
+    
+    pending = await service.get_pending_commands(device_id)
+    commands_list = [{"id": str(c.id), "command": c.command, "payload": c.payload} for c in pending]
+    
+    # Also fetch the latest policy constraints to return in heartbeat
+    device = await service.get_device(device_id)
+    active_policy = {}
+    if device and device.policies:
+        # Assuming the last added policy is the active one
+        last_policy = device.policies[-1]
+        active_policy = {
+            "camera_disabled": last_policy.camera_disabled,
+            "install_unknown_sources": last_policy.install_unknown_sources,
+            "factory_reset_disabled": last_policy.factory_reset_disabled,
+            "kiosk_mode": last_policy.kiosk_mode
+        }
+    
+    return {
+        "status": "synced",
+        "commands": commands_list,
+        "policy": active_policy
+    }
 
 
 @router.get("/policies", response_model=List[Policy])
 async def list_policies(service: MDMService = Depends(get_service)):
-    return [
-       {"id": "1", "name": "Basic Security", "type": "security", "status": "active", "created_at": None},
-       {"id": "2", "name": "Strict Compliance", "type": "compliance", "status": "active", "created_at": None},
-    ]
+    return await service.list_policies()
 
+@router.post("/policies", response_model=Policy)
+async def create_global_policy(policy_data: PolicyCreate, service: MDMService = Depends(get_service)):
+    policy_dict = policy_data.model_dump()
+    # Create the policy as a global template (device_id=None)
+    policy = await service.repo.add_policy(None, policy_dict)
+    
+    # Automatically queue it for all devices since it's a global policy
+    devices = await service.list_devices()
+    for d in devices:
+        await service.repo.add_command(d.device_id, "apply_policy", payload=policy_dict)
+        
+    return policy
 
 @router.get("/policies/{policy_id}", response_model=Policy)
 async def get_policy(policy_id: str, service: MDMService = Depends(get_service)):
     return {"id": policy_id, "name": f"Policy {policy_id}", "type": "security", "status": "active", "created_at": None}
 
 
-@router.post("/devices/{device_id}/policies/{policy_id}")
+@router.post("/devices/{device_id}/policies")
 async def apply_policy_to_device(
     device_id: str, 
-    policy_id: str, 
+    policy_data: PolicyCreate, 
     service: MDMService = Depends(get_service)
 ):
-    policy_data = {"policy_id": policy_id, "name": f"Policy {policy_id}", "type": "security"}
-    ok = await service.apply_policy(device_id, policy_data)
+    # Pass dict to apply_policy
+    ok = await service.apply_policy(device_id, policy_data.model_dump())
     if not ok:
         raise HTTPException(status_code=404, detail="Device not found")
     return {"status": "applied"}

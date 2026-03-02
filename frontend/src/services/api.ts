@@ -57,6 +57,10 @@ export interface Policy {
   type: string;
   applied_at?: string;
   status?: string;
+  camera_disabled?: boolean;
+  install_unknown_sources?: boolean;
+  factory_reset_disabled?: boolean;
+  kiosk_mode?: string | null;
 }
 
 export interface DeviceEvent {
@@ -102,6 +106,9 @@ export const deviceService = {
 
   sync: (id: string) =>
     api.post(`/devices/${id}/sync`),
+
+  wipe: (id: string) =>
+    api.post(`/devices/${id}/wipe`),
 };
 
 // ─── Policy Endpoints ─────────────────────────────────────────────────────────
@@ -109,6 +116,9 @@ export const deviceService = {
 export const policyService = {
   getAll: () =>
     api.get('/policies'),
+
+  create: (data: Partial<Policy>) =>
+    api.post('/policies', data),
 
   getById: (id: string) =>
     api.get(`/policies/${id}`),
