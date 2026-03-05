@@ -98,14 +98,17 @@ export const deviceService = {
   getById: (id: string) =>
     api.get<Device>(`/devices/${id}`),
 
+  getTelemetry: (id: string) =>
+    api.get<any>(`/devices/${id}/telemetry`),
+
   lock: (id: string) =>
     api.post(`/devices/${id}/lock`),
 
   reboot: (id: string) =>
     api.post(`/devices/${id}/reboot`),
 
-  sync: (id: string) =>
-    api.post(`/devices/${id}/sync`),
+  sync: (id: string, payload: any = {}) =>
+    api.post(`/devices/${id}/checkin`, payload),
 
   wipe: (id: string) =>
     api.post(`/devices/${id}/wipe`),
@@ -123,8 +126,8 @@ export const policyService = {
   getById: (id: string) =>
     api.get(`/policies/${id}`),
 
-  apply: (deviceId: string, policyId: string) =>
-    api.post(`/devices/${deviceId}/policies/${policyId}`),
+  apply: (deviceId: string, policyData: Partial<Policy>) =>
+    api.post(`/devices/${deviceId}/policies`, policyData),
 };
 
 // ─── Log Endpoints ────────────────────────────────────────────────────────────

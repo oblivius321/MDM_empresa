@@ -11,7 +11,24 @@
 
 # Elion MDM Enterprise - Master Data Management & Device Control
 
-Uma solução completa e *Full-Stack* de Gerenciamento de Dispositivos Móveis (MDM), focada em segurança corporativa e controle total de frotas Android. Construída com uma arquitetura moderna para fornecer um painel centralizado de onde gestores de TI podem aplicar políticas restritivas, bloquear aparelhos perdidos e monitorar inventários em tempo real.
+Uma solução completa e *Full-Stack* de Gerenciamento de Dispositivos Móveis (MDM), focada em segurança corporativa e controle total de frotas Android.
+
+---
+
+## ⚡ Quick Start
+
+**Novo no projeto?** Comece por aqui:
+
+1. **[ESSENTIALS.md](./ESSENTIALS.md)** - Guia rápido de referência (2 min)
+2. **[SETUP.md](./SETUP.md)** - Como configurar localmente (5 min)
+3. **[ENV_GUIDE.md](./ENV_GUIDE.md)** - Variáveis de ambiente (3 min)
+
+Para começar imediatamente:
+```bash
+cp .env.development .env  # ou customize
+python backend/main.py    # Terminal 1
+npm run dev --prefix frontend  # Terminal 2
+```
 
 ---
 

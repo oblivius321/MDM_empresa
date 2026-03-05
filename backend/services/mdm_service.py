@@ -8,6 +8,13 @@ class MDMService:
     def __init__(self, repo: DeviceRepository):
         self.repo = repo
 
+    async def process_checkin(self, device_id: str, payload: dict):
+        from datetime import datetime
+        await self.repo.update_device(device_id, {"last_checkin": datetime.utcnow(), "status": "online"})
+        if payload:
+            await self.repo.add_telemetry(device_id, payload)
+
+
     async def enroll_device(self, device_id: str, name: str, device_type: str, **kwargs) -> Device:
         device = await self.repo.get(device_id)
         if device:

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -6,72 +6,66 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Shield, ArrowRight, UserPlus, ArrowLeft } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function Login() {
     const navigate = useNavigate();
     const { toast } = useToast();
+    const { login, register, isAuthenticated } = useAuth();
     const [isRegistering, setIsRegistering] = useState(false);
-
-    // Form states
-    const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
 
-    // Register extra states
+    // Form states - Login
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+
+    // Form states - Register
     const [adminEmail, setAdminEmail] = useState('');
     const [adminPassword, setAdminPassword] = useState('');
 
+    // Redirecionar se já autenticado
+    useEffect(() => {
+        if (isAuthenticated) {
+            navigate('/');
+        }
+    }, [isAuthenticated, navigate]);
+
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
+        
+        if (!email || !password) {
+            toast({
+                title: 'Campos Obrigatórios',
+                description: 'Preencha email e senha',
+                variant: 'destructive',
+            });
+            return;
+        }
+
         setLoading(true);
 
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 segundos de limite
-
         try {
-            const response = await fetch(`http://${window.location.hostname}:8000/api/auth/login`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ email, password }),
-                signal: controller.signal
-            });
-
-            clearTimeout(timeoutId);
-
-            if (response.ok) {
-                const data = await response.json();
+            const success = await login(email, password);
+            
+            if (success) {
                 toast({
                     title: 'Autenticação bem-sucedida',
                     description: 'Bem-vindo ao console do Elion MDM.',
                 });
-
-                localStorage.setItem('auth_token', data.access_token);
-
                 navigate('/');
             } else {
-                const errorData = await response.json();
                 toast({
                     title: 'Acesso Negado',
-                    description: errorData.detail || 'Email corporativo ou senha inválidos.',
+                    description: 'Email corporativo ou senha inválidos.',
                     variant: 'destructive',
                 });
             }
         } catch (error: any) {
-            clearTimeout(timeoutId);
-
-            if (error.name === 'AbortError') {
-                toast({
-                    title: 'Tempo Excedido',
-                    description: 'Os servidores demoraram para responder ou as credenciais estão incorretas.',
-                    variant: 'destructive',
-                });
-            } else {
-                toast({
-                    title: 'Erro de Conexão',
-                    description: 'Não foi possível se conectar com os servidores da Elion.',
-                    variant: 'destructive',
-                });
-            }
+            toast({
+                title: 'Erro de Conexão',
+                description: error.message || 'Não foi possível se conectar com os servidores.',
+                variant: 'destructive',
+            });
         } finally {
             setLoading(false);
         }
@@ -83,7 +77,7 @@ export default function Login() {
         if (!email || !password || !adminEmail || !adminPassword) {
             toast({
                 title: 'Falha no Cadastro',
-                description: 'Preencha todos os campos do Funcionário e a Autorização do Líder.',
+                description: 'Preencha todos os campos.',
                 variant: 'destructive',
             });
             return;
@@ -92,44 +86,34 @@ export default function Login() {
         setLoading(true);
 
         try {
-            const response = await fetch(`http://${window.location.hostname}:8000/api/auth/register`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    email: email,
-                    password: password,
-                    admin_email: adminEmail,
-                    admin_password: adminPassword
-                }),
-            });
-
-            if (response.ok) {
+            const success = await register(email, password, adminEmail, adminPassword);
+            
+            if (success) {
                 toast({
                     title: 'Operador Cadastrado!',
                     description: 'Usuário liberado com sucesso. Faça login agora.',
                 });
                 setIsRegistering(false);
+                setEmail('');
                 setPassword('');
                 setAdminEmail('');
                 setAdminPassword('');
             } else {
-                const errorData = await response.json();
                 toast({
                     title: 'Assinatura Inválida',
-                    description: errorData.detail || 'As credenciais do líder não autorizaram a criação do cargo.',
+                    description: 'As credenciais do líder não autorizaram a criação.',
                     variant: 'destructive',
                 });
             }
-        } catch (error) {
+        } catch (error: any) {
             toast({
                 title: 'Erro de Conexão',
-                description: 'Não foi possível autorizar, os servidores estão inacessíveis.',
+                description: error.message || 'Não foi possível autorizar.',
                 variant: 'destructive',
             });
         } finally {
             setLoading(false);
         }
-    };
 
     return (
         <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4 relative overflow-hidden">

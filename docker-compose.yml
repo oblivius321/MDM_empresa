@@ -1,0 +1,90 @@
+version: '3.9'
+
+services:
+  # ===== PostgreSQL Database =====
+  postgres:
+    image: postgres:15-alpine
+    container_name: elion-mdm-postgres
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-Sherlock314}
+      POSTGRES_DB: ${DB_NAME:-mdm_project}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - elion-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===== Backend FastAPI Server =====
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: elion-mdm-backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${DB_USER:-postgres}:${DB_PASSWORD:-Sherlock314}@postgres:5432/${DB_NAME:-mdm_project}
+      SECRET_KEY: ${SECRET_KEY:-elion-mdm-secret-key-enterprise-edition-2026}
+      DEBUG: ${DEBUG:-False}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8080}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app/backend:ro
+    networks:
+      - elion-network
+    command: >
+      sh -c "python migrate_sqlite_to_postgres.py &&
+             uvicorn backend.main:app --host 0.0.0.0 --port 8000"
+
+  # ===== Frontend Vite + Node =====
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: elion-mdm-frontend
+    environment:
+      VITE_API_BASE_URL: http://backend:8000/api
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - elion-network
+    command: npm run dev -- --host 0.0.0.0
+
+  # ===== Nginx Reverse Proxy (Optional) =====
+  nginx:
+    image: nginx:alpine
+    container_name: elion-mdm-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - elion-network
+
+networks:
+  elion-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local

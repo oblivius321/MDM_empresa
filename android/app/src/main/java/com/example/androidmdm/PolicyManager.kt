@@ -61,4 +61,15 @@ class PolicyManager(private val context: Context) {
             Log.e("ElionMDM", "Erro de segurança ao impor senha: ${e.message}")
         }
     }
+
+    fun rebootDevice() {
+        try {
+            if (devicePolicyManager.isAdminActive(componentName)) {
+                devicePolicyManager.reboot(componentName)
+                Log.d("ElionMDM", "Reboot acionado.")
+            }
+        } catch (e: SecurityException) {
+            Log.e("ElionMDM", "Erro de segurança ao reiniciar: ${e.message}")
+        }
+    }
 }

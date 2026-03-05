@@ -7,6 +7,7 @@ import {
   FileText,
   Settings,
   ChevronRight,
+  LogOut,
 } from 'lucide-react';
 
 const navItems = [
@@ -64,13 +65,23 @@ export function AppSidebar() {
       {/* Footer */}
       <div className="px-4 py-4 border-t border-sidebar-border">
         <div className="flex items-center gap-2.5 px-1">
-          <div className="w-7 h-7 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center text-xs font-semibold text-primary">
+          <div className="w-8 h-8 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center text-sm font-semibold text-primary">
             A
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-xs font-medium text-foreground truncate">Administrador</p>
+            <p className="text-sm font-medium text-foreground truncate">Administrador</p>
             <p className="text-xs text-muted-foreground truncate">admin@empresa.com</p>
           </div>
+          <button
+            title="Sair"
+            onClick={() => {
+              localStorage.removeItem('auth_token');
+              window.location.href = '/login';
+            }}
+            className="p-1.5 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
         </div>
       </div>
     </aside>

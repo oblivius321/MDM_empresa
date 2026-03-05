@@ -4,7 +4,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.services.mdm_service import MDMService
 from backend.repositories.device_repo import DeviceRepository
 from backend.core.database import get_db
-from backend.schemas.device import DeviceCreate, DeviceResponse, PolicyCreate, DeviceUpdate, Policy, LogResponse
+from backend.schemas.device import DeviceCreate, DeviceResponse, PolicyCreate, DeviceUpdate, Policy, LogResponse, CommandResponse
+from backend.api.auth import get_current_user
+from backend.models.user import User
 import datetime
 
 router = APIRouter()
@@ -16,11 +18,12 @@ def get_service(repo: DeviceRepository = Depends(get_repo)) -> MDMService:
     return MDMService(repo)
 
 
-@router.post("/enroll", response_model=DeviceResponse)
+@router.post("/enroll", response_model=DeviceResponse, tags=["Dispositivos"])
 async def enroll(
     req: DeviceCreate, 
     service: MDMService = Depends(get_service)
 ):
+    """Endpoint público para enroll de dispositivos (chamado pelo app Android)"""
     extra_fields = req.model_dump(exclude={"device_id", "name", "device_type"}, exclude_unset=True)
     device = await service.enroll_device(req.device_id, req.name, req.device_type, **extra_fields)
     return device
@@ -30,7 +33,8 @@ async def enroll(
 async def list_devices(
     status: Optional[str] = None,
     search: Optional[str] = None,
-    service: MDMService = Depends(get_service)
+    service: MDMService = Depends(get_service),
+    current_user: User = Depends(get_current_user)
 ):
     devices = await service.list_devices()
     
@@ -50,7 +54,10 @@ async def list_devices(
 
 
 @router.get("/devices/summary")
-async def get_summary(service: MDMService = Depends(get_service)):
+async def get_summary(
+    service: MDMService = Depends(get_service),
+    current_user: User = Depends(get_current_user)
+):
     devices = await service.list_devices()
     total = len(devices)
     online = sum(1 for d in devices if d.status == 'online' or d.is_active)
@@ -69,7 +76,8 @@ async def get_summary(service: MDMService = Depends(get_service)):
 @router.delete("/devices/{device_id}")
 async def remove_device(
     device_id: str, 
-    service: MDMService = Depends(get_service)
+    service: MDMService = Depends(get_service),
+    current_user: User = Depends(get_current_user)
 ):
     ok = await service.remove_device(device_id)
     if not ok:
@@ -80,16 +88,39 @@ async def remove_device(
 @router.get("/devices/{device_id}", response_model=DeviceResponse)
 async def get_device(
     device_id: str, 
-    service: MDMService = Depends(get_service)
+    service: MDMService = Depends(get_service),
+    current_user: User = Depends(get_current_user)
 ):
     d = await service.get_device(device_id)
     if not d:
         raise HTTPException(status_code=404, detail="Device not found")
     return d
 
+@router.get("/devices/{device_id}/telemetry")
+async def get_device_telemetry(
+    device_id: str, 
+    service: MDMService = Depends(get_service),
+    current_user: User = Depends(get_current_user)
+):
+    telemetry = await service.repo.get_telemetry(device_id)
+    if not telemetry:
+        return {} # Return empty object instead of 404 to gracefully handle devices with no telemetry yet
+    return {
+        "battery_level": telemetry.battery_level,
+        "is_charging": telemetry.is_charging,
+        "free_disk_space_mb": telemetry.free_disk_space_mb,
+        "installed_apps": telemetry.installed_apps,
+        "location": {
+            "latitude": telemetry.latitude,
+            "longitude": telemetry.longitude
+        } if telemetry.latitude and telemetry.longitude else None,
+        "foreground_app": telemetry.foreground_app,
+        "timestamp": telemetry.timestamp
+    }
+
 
 @router.post("/devices/{device_id}/lock")
-async def lock_device(device_id: str, service: MDMService = Depends(get_service)):
+async def lock_device(device_id: str, service: MDMService = Depends(get_service), current_user: User = Depends(get_current_user)):
     d = await service.update_device(device_id, {"status": "locked"})
     if not d:
         raise HTTPException(status_code=404, detail="Device not found")
@@ -97,7 +128,7 @@ async def lock_device(device_id: str, service: MDMService = Depends(get_service)
 
 
 @router.post("/devices/{device_id}/reboot")
-async def reboot_device(device_id: str, service: MDMService = Depends(get_service)):
+async def reboot_device(device_id: str, service: MDMService = Depends(get_service), current_user: User = Depends(get_current_user)):
     # Since we added command queues, let's use it for reboot too
     ok = await service.repo.add_command(device_id, "reboot_device")
     if not ok:
@@ -105,46 +136,91 @@ async def reboot_device(device_id: str, service: MDMService = Depends(get_servic
     return {"status": "command_sent", "command": "reboot_device"}
 
 @router.post("/devices/{device_id}/wipe")
-async def wipe_device(device_id: str, service: MDMService = Depends(get_service)):
+async def wipe_device(device_id: str, service: MDMService = Depends(get_service), current_user: User = Depends(get_current_user)):
     ok = await service.wipe_device(device_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Device not found")
     return {"status": "command_sent", "command": "wipe_device"}
 
 
-@router.post("/devices/{device_id}/sync")
-async def sync_device(device_id: str, service: MDMService = Depends(get_service)):
-    await service.update_device(device_id, {"last_checkin": datetime.datetime.utcnow(), "status": "online"})
-    
+@router.post("/devices/{device_id}/checkin", tags=["Dispositivos"])
+async def checkin_device(device_id: str, payload: Dict, service: MDMService = Depends(get_service)):
+    """Endpoint público para check-in de dispositivos (chamado pelo app Android)
+    Nota: Idealmente, dispositivos deveriam usar uma API Key, não JWT de usuário"""
+    await service.process_checkin(device_id, payload)
+    return {"status": "checked_in"}
+
+@router.get("/devices/{device_id}/commands/pending", response_model=List[CommandResponse], tags=["Dispositivos"])
+async def get_pending_commands(device_id: str, service: MDMService = Depends(get_service)):
+    """Endpoint público para dispositivos buscarem comandos pendentes
+    Nota: Idealmente, dispositivos deveriam usar uma API Key, não JWT de usuário"""
     pending = await service.get_pending_commands(device_id)
-    commands_list = [{"id": str(c.id), "command": c.command, "payload": c.payload} for c in pending]
+    return [{"id": str(c.id), "command": c.command, "payload": c.payload} for c in pending]
+
+@router.post("/devices/{device_id}/commands/{command_id}/ack", tags=["Dispositivos"])
+async def acknowledge_command(
+    device_id: str, 
+    command_id: int, 
+    service: MDMService = Depends(get_service)
+):
+    """Dispositivo reconhece que recebeu o comando"""
+    ok = await service.repo.acknowledge_command(command_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Command not found")
+    return {"status": "acknowledged", "command_id": command_id}
+
+@router.post("/devices/{device_id}/commands/{command_id}/status", tags=["Dispositivos"])
+async def update_command_status(
+    device_id: str, 
+    command_id: int, 
+    payload: Dict, 
+    service: MDMService = Depends(get_service)
+):
+    """Dispositivo reporta status final de execução do comando"""
+    status = payload.get("status", "completed")
+    error_msg = payload.get("error_message")
     
-    # Also fetch the latest policy constraints to return in heartbeat
-    device = await service.get_device(device_id)
-    active_policy = {}
-    if device and device.policies:
-        # Assuming the last added policy is the active one
-        last_policy = device.policies[-1]
-        active_policy = {
-            "camera_disabled": last_policy.camera_disabled,
-            "install_unknown_sources": last_policy.install_unknown_sources,
-            "factory_reset_disabled": last_policy.factory_reset_disabled,
-            "kiosk_mode": last_policy.kiosk_mode
-        }
+    if status == "completed":
+        ok = await service.repo.complete_command(command_id, error_msg)
+    elif status == "failed":
+        ok = await service.repo.fail_command(command_id, error_msg or "Unknown error")
+    else:
+        ok = False
     
-    return {
-        "status": "synced",
-        "commands": commands_list,
-        "policy": active_policy
-    }
+    if not ok:
+        raise HTTPException(status_code=404, detail="Command not found")
+    
+    return {"status": "updated", "command_id": command_id, "new_status": status}
+
+@router.get("/devices/{device_id}/commands/{command_id}/status", tags=["Dispositivos"])
+async def get_command_status(
+    device_id: str,
+    command_id: int,
+    service: MDMService = Depends(get_service)
+):
+    """Dispositivo ou admin consulta status de um comando"""
+    status = await service.repo.get_command_status(command_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Command not found")
+    return status
+
+@router.get("/devices/{device_id}/commands/failed", response_model=List[CommandResponse], tags=["Dispositivos"])
+async def get_failed_commands(
+    device_id: str,
+    service: MDMService = Depends(get_service)
+):
+    """Retorna comandos que falharam para quem tentar reexecutar"""
+    failed = await service.repo.get_failed_commands(device_id)
+    return [{"id": str(c.id), "command": c.command, "payload": c.payload, "error": c.error_message} for c in failed]
+
 
 
 @router.get("/policies", response_model=List[Policy])
-async def list_policies(service: MDMService = Depends(get_service)):
+async def list_policies(service: MDMService = Depends(get_service), current_user: User = Depends(get_current_user)):
     return await service.list_policies()
 
 @router.post("/policies", response_model=Policy)
-async def create_global_policy(policy_data: PolicyCreate, service: MDMService = Depends(get_service)):
+async def create_global_policy(policy_data: PolicyCreate, service: MDMService = Depends(get_service), current_user: User = Depends(get_current_user)):
     policy_dict = policy_data.model_dump()
     # Create the policy as a global template (device_id=None)
     policy = await service.repo.add_policy(None, policy_dict)
@@ -157,7 +233,7 @@ async def create_global_policy(policy_data: PolicyCreate, service: MDMService = 
     return policy
 
 @router.get("/policies/{policy_id}", response_model=Policy)
-async def get_policy(policy_id: str, service: MDMService = Depends(get_service)):
+async def get_policy(policy_id: str, service: MDMService = Depends(get_service), current_user: User = Depends(get_current_user)):
     return {"id": policy_id, "name": f"Policy {policy_id}", "type": "security", "status": "active", "created_at": None}
 
 
@@ -165,7 +241,8 @@ async def get_policy(policy_id: str, service: MDMService = Depends(get_service))
 async def apply_policy_to_device(
     device_id: str, 
     policy_data: PolicyCreate, 
-    service: MDMService = Depends(get_service)
+    service: MDMService = Depends(get_service),
+    current_user: User = Depends(get_current_user)
 ):
     # Pass dict to apply_policy
     ok = await service.apply_policy(device_id, policy_data.model_dump())
@@ -175,7 +252,7 @@ async def apply_policy_to_device(
 
 
 @router.get("/logs", response_model=List[LogResponse])
-async def get_logs(device_id: Optional[str] = None, page: int = 1, size: int = 50, service: MDMService = Depends(get_service)):
+async def get_logs(device_id: Optional[str] = None, page: int = 1, size: int = 50, service: MDMService = Depends(get_service), current_user: User = Depends(get_current_user)):
     return [
         {"id": "1", "device_id": device_id or "all", "type": "system", "message": "System logs retrieved", "severity": "info", "timestamp": datetime.datetime.utcnow()}
     ]

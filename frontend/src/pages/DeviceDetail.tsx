@@ -4,11 +4,15 @@ import { TopBar } from '@/components/TopBar';
 import { StatusBadge } from '@/components/StatusBadge';
 import {
   ArrowLeft, Lock, RotateCw, RefreshCw, Smartphone, Shield,
-  Clock, Building2, Hash, Cpu, CheckCircle2, XCircle, AlertCircle, Loader2,
+  Clock, Building2, Hash, Cpu, CheckCircle2, XCircle, AlertCircle, Loader2, Link as LinkIcon, X,
+  BatteryCharging, Battery, HardDrive, LayoutGrid, MapPin
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
+import { policyService, Policy } from '@/services/api';
+import { useState, useEffect } from 'react';
+import { useToast } from '@/hooks/use-toast';
 
 function ActionButton({
   label,
@@ -57,7 +61,43 @@ function InfoRow({ label, value, mono }: { label: string; value?: string; mono?:
 export default function DeviceDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { device, loading, error, refresh, runAction, actionLoading, actionResult } = useDevice(id!);
+  const { toast } = useToast();
+  const { device, telemetry, loading, error, refresh, runAction, actionLoading, actionResult } = useDevice(id!);
+
+  // Modal State
+  const [isPolicyModalOpen, setIsPolicyModalOpen] = useState(false);
+  const [availablePolicies, setAvailablePolicies] = useState<Policy[]>([]);
+  const [policiesLoading, setPoliciesLoading] = useState(false);
+  const [assigningPolicyId, setAssigningPolicyId] = useState<string | null>(null);
+
+  const openPolicyModal = async () => {
+    setIsPolicyModalOpen(true);
+    setPoliciesLoading(true);
+    try {
+      const res = await policyService.getAll();
+      setAvailablePolicies(res.data);
+    } catch (err) {
+      toast({ title: 'Erro', description: 'Nao foi possivel carregar politicas.', variant: 'destructive' })
+    } finally {
+      setPoliciesLoading(false);
+    }
+  };
+
+  const handleAssignPolicy = async (policy: Policy) => {
+    if (!id) return;
+    setAssigningPolicyId(policy.id);
+    try {
+      // Re-use api signature to assign full policy data directly to device target (Android requirement)
+      await policyService.apply(id, policy);
+      toast({ title: 'Atribuído', description: `Política ${policy.name} enviada ao dispositivo.` });
+      setIsPolicyModalOpen(false);
+      setTimeout(refresh, 2000);
+    } catch (err) {
+      toast({ title: 'Erro', description: 'Nao foi possivel atribuir politica.', variant: 'destructive' })
+    } finally {
+      setAssigningPolicyId(null);
+    }
+  };
 
   if (loading) {
     return (
@@ -169,6 +209,13 @@ export default function DeviceDetail() {
               onClick={() => runAction('lock')}
             />
             <ActionButton
+              label="Atribuir Política"
+              icon={LinkIcon}
+              action="apply_policy"
+              loading={actionLoading}
+              onClick={openPolicyModal}
+            />
+            <ActionButton
               label="Wipe"
               icon={AlertCircle}
               action="wipe"
@@ -198,6 +245,30 @@ export default function DeviceDetail() {
               <InfoRow label="Android" value={device.android_version ? `Android ${device.android_version}` : undefined} />
               <InfoRow label="Empresa" value={device.company} />
             </div>
+
+            {/* In-Line Telemetry Highlights */}
+            {telemetry && (
+              <div className="mt-6 pt-6 border-t border-border/50 grid grid-cols-2 gap-4">
+                <div>
+                  <div className="flex items-center gap-1.5 mb-1 text-muted-foreground">
+                    {telemetry.is_charging ? <BatteryCharging className="w-4 h-4 text-status-syncing" /> : <Battery className="w-4 h-4" />}
+                    <span className="text-xs font-semibold">Bateria</span>
+                  </div>
+                  <div className="text-xl font-bold text-foreground">
+                    {telemetry.battery_level !== undefined ? `${telemetry.battery_level}%` : 'N/A'}
+                  </div>
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5 mb-1 text-muted-foreground">
+                    <HardDrive className="w-4 h-4" />
+                    <span className="text-xs font-semibold">Livre (MB)</span>
+                  </div>
+                  <div className="text-xl font-bold text-foreground">
+                    {telemetry.free_disk_space_mb !== undefined ? Math.floor(telemetry.free_disk_space_mb) : 'N/A'}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Compliance & Last Sync */}
@@ -244,8 +315,70 @@ export default function DeviceDetail() {
             )}
           </div>
 
+          {/* Telemetry Details Module */}
+          <div className="col-span-1 lg:col-span-3 grid grid-cols-1 lg:grid-cols-2 gap-6 mt-2">
+
+            {/* Location Map Placeholder */}
+            <div className="card-glass p-0 overflow-hidden min-h-[250px] relative flex flex-col bg-muted/10">
+              <div className="p-4 bg-background/80 backdrop-blur-sm border-b border-border z-10 flex items-center gap-2 absolute top-0 left-0 right-0">
+                <MapPin className="w-4 h-4 text-status-online" />
+                <h3 className="text-sm font-semibold text-foreground">Última Localização</h3>
+              </div>
+              <div className="flex-1 flex items-center justify-center p-6 mt-12">
+                {telemetry && telemetry.location ? (
+                  <div className="text-center">
+                    <div className="p-4 rounded-full bg-status-online/10 inline-flex mb-3">
+                      <MapPin className="w-8 h-8 text-status-online" />
+                    </div>
+                    <p className="text-sm font-medium text-foreground">Lat: {telemetry.location.latitude}</p>
+                    <p className="text-sm font-medium text-foreground">Lng: {telemetry.location.longitude}</p>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Implementar pacote Leaflet/Mapbox para renderização.
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground flex items-center gap-2">
+                    <MapPin className="w-4 h-4 opacity-50" />
+                    Localização não reportada
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Apps Info */}
+            <div className="card-glass p-5 flex flex-col max-h-[300px]">
+              <div className="flex items-center gap-2 mb-4 shrink-0">
+                <LayoutGrid className="w-4 h-4 text-primary" />
+                <h3 className="text-sm font-semibold text-foreground">Aplicativos do Dispositivo</h3>
+              </div>
+
+              {telemetry && telemetry.foreground_app && (
+                <div className="mb-4 p-3 bg-primary/5 border border-primary/20 rounded-md shrink-0">
+                  <p className="text-[10px] text-primary uppercase font-bold mb-1">App em Primeiro Plano</p>
+                  <p className="text-sm font-medium text-foreground truncate">{telemetry.foreground_app}</p>
+                </div>
+              )}
+
+              <div className="flex-1 min-h-0 overflow-y-auto pr-2">
+                <p className="text-xs font-bold text-muted-foreground uppercase mb-2">Apps Instalados ({telemetry?.installed_apps?.length || 0})</p>
+                {telemetry && telemetry.installed_apps && telemetry.installed_apps.length > 0 ? (
+                  <div className="space-y-1.5">
+                    {telemetry.installed_apps.map((app: string, idx: number) => (
+                      <div key={idx} className="text-xs text-foreground bg-muted/50 p-2 rounded border border-border/50 truncate">
+                        {app}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground italic">Nenhuma informação de aplicativos.</p>
+                )}
+              </div>
+            </div>
+
+          </div>
+
           {/* Policies & Events */}
-          <div className="space-y-6">
+          <div className="col-span-1 lg:col-span-3 grid grid-cols-1 lg:grid-cols-2 gap-6 mt-2">
             {/* Policies */}
             <div className="card-glass p-5">
               <div className="flex items-center gap-2 mb-4">
@@ -302,6 +435,52 @@ export default function DeviceDetail() {
           </div>
         </div>
       </div>
+
+      {/* Policy Assignment Modal */}
+      {isPolicyModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm animate-fade-in p-4">
+          <div className="bg-card w-full max-w-lg rounded-xl border border-border shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between p-5 border-b border-border">
+              <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
+                <LinkIcon className="w-5 h-5 text-primary" />
+                Atribuir Política ao Dispositivo
+              </h2>
+              <button onClick={() => setIsPolicyModalOpen(false)} className="text-muted-foreground hover:text-foreground">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-5 max-h-[60vh] overflow-y-auto space-y-3">
+              {policiesLoading ? (
+                <div className="flex flex-col items-center justify-center py-8">
+                  <Loader2 className="w-8 h-8 animate-spin text-primary mb-2" />
+                  <span className="text-sm text-muted-foreground">Buscando políticas...</span>
+                </div>
+              ) : availablePolicies.length > 0 ? (
+                availablePolicies.map((p) => (
+                  <div key={p.id} className="flex flex-col gap-3 p-4 border border-border rounded-lg bg-secondary/30 hover:bg-secondary/60 transition-colors">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h4 className="text-sm font-bold text-foreground">{p.name}</h4>
+                        <p className="text-xs text-muted-foreground uppercase">{p.type}</p>
+                      </div>
+                      <button
+                        disabled={assigningPolicyId === p.id}
+                        onClick={() => handleAssignPolicy(p)}
+                        className="px-3 py-1.5 rounded bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50"
+                      >
+                        {assigningPolicyId === p.id ? 'Atribuindo...' : 'Atribuir'}
+                      </button>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-6 text-muted-foreground text-sm">Nenhuma política existente para atribuição.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

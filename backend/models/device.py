@@ -25,6 +25,7 @@ class Device(Base):
 
     # Relationships
     policies: Mapped[List["Policy"]] = relationship(back_populates="device", cascade="all, delete-orphan")
+    telemetry: Mapped[List["DeviceTelemetry"]] = relationship("DeviceTelemetry", back_populates="device", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Device(id={self.id}, device_id='{self.device_id}', name='{self.name}')>"
