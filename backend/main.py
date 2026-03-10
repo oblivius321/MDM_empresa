@@ -32,8 +32,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from backend.api import websocket_routes
+
 app.include_router(routes.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
+app.include_router(websocket_routes.router, prefix="/api")
+
 @app.get("/")
 def root():
     return {

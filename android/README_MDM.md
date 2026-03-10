@@ -10,6 +10,7 @@ Complete Device Policy Controller (DPC) implementation for Android 10+ with adva
 - **Periodic Check-ins** - WorkManager runs every 15 minutes with exponential backoff
 - **Command Execution** - Real-time policy enforcement (reboot, wipe, lock, camera, kiosk)
 - **Telemetry Collection** - Battery, disk, location, app inventory, activity tracking
+- **WebSocket Tunneling** - Conexão contínua bi-direcional (Real-Time) para execução assíncrona instantânea.
 
 ### ✅ Advanced Features
 - **FusedLocationProvider** - High-accuracy location with suspend/resume
@@ -51,6 +52,7 @@ android/
 │   │   │   └── network/
 │   │   │       ├── ElionAPI.kt                    # Retrofit API interface
 │   │   │       ├── RetrofitClient.kt              # HTTP client setup
+│   │   │       ├── MDMWebSocketClient.kt          # Conexão RealTime OkHttp3
 │   │   │       └── Payloads.kt                    # Data classes
 │   │   ├── AndroidManifest.xml                    # App manifest
 │   │   └── res/

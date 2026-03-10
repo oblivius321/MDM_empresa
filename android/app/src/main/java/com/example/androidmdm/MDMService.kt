@@ -12,7 +12,10 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.androidmdm.network.CheckInPayload
 import com.example.androidmdm.network.RetrofitClient
+import com.example.androidmdm.network.MDMWebSocketClient
 import androidx.work.*
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.*
 import java.util.UUID
@@ -23,6 +26,7 @@ class MDMService : Service() {
     private lateinit var policyManager: PolicyManager
     private lateinit var inventoryManager: InventoryManager
     private lateinit var sharedPreferences: SharedPreferences
+    private lateinit var webSocketClient: MDMWebSocketClient
     
     // Advanced DPC Providers
     private lateinit var locationProvider: LocationProvider
@@ -49,6 +53,9 @@ class MDMService : Service() {
         kioskLauncher = KioskLauncher(this)
         screenCaptureManager = ScreenCaptureManager(this)
         
+        // Instancia o cliente socket
+        webSocketClient = MDMWebSocketClient(this, getOrCreateDeviceId())
+        
         Log.d("ElionMDM", "MDMService Criado.")
     }
 
@@ -61,7 +68,32 @@ class MDMService : Service() {
         // Start check-in loop
         startCheckInLoop()
         
+        // Ativa o Radar Submarino Sonar WebSocket do MDM
+        val deviceId = getOrCreateDeviceId()
+        webSocketClient.connect()
+        
+        // Register Broadcast Receiver para ordens de comando vindas do Socket Interno
+        registerReceiver(commandReceiver, IntentFilter("com.example.androidmdm.COMMAND_RECEIVED"))
+        
         return START_STICKY
+    }
+
+    private val commandReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "com.example.androidmdm.COMMAND_RECEIVED") {
+                val command = intent.getStringExtra("command")
+                Log.w("ElionMDM", "🔴 ALERTA VERMELHO: COMANDO RECEBIDO VIA WEBSOCKET: $command")
+                
+                when (command) {
+                    "lock_device" -> policyManager.lockNow()
+                    "wipe_device" -> Log.e("ElionMDM", "WIPE DEVICE ACIONADO!") //policyManager.wipeData() - DESATIVADO PARA SUA SEGURANCA
+                    "disable_camera" -> policyManager.setCameraDisabled(true)
+                    "enable_camera" -> policyManager.setCameraDisabled(false)
+                    "reboot_device" -> policyManager.rebootDevice()
+                    // add other cases here...
+                }
+            }
+        }
     }
 
     private fun startForegroundNotification() {
@@ -163,6 +195,8 @@ class MDMService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         serviceScope.cancel()
+        webSocketClient.disconnect()
+        unregisterReceiver(commandReceiver)
         Log.d("ElionMDM", "MDMService Destruído.")
     }
 

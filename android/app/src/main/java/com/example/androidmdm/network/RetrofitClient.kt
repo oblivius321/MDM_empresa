@@ -15,4 +15,8 @@ object RetrofitClient {
             .build()
             .create(ElionAPI::class.java)
     }
+    
+    fun getBaseUrl(): String {
+        return BASE_URL.replace("/api/", "/")
+    }
 }

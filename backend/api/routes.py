@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import List, Dict, Optional
+from backend.api.websockets import manager
 from sqlalchemy.ext.asyncio import AsyncSession
 from backend.services.mdm_service import MDMService
 from backend.repositories.device_repo import DeviceRepository
@@ -26,6 +27,15 @@ async def enroll(
     """Endpoint público para enroll de dispositivos (chamado pelo app Android)"""
     extra_fields = req.model_dump(exclude={"device_id", "name", "device_type"}, exclude_unset=True)
     device = await service.enroll_device(req.device_id, req.name, req.device_type, **extra_fields)
+    
+    # Notifica os dashboards de um novo dispositivo na frota
+    await manager.broadcast_to_dashboards({
+        "type": "DEVICE_ENROLLED",
+        "device_id": device.device_id,
+        "name": device.name,
+        "status": device.status
+    })
+    
     return device
 
 
@@ -124,6 +134,8 @@ async def lock_device(device_id: str, service: MDMService = Depends(get_service)
     d = await service.update_device(device_id, {"status": "locked"})
     if not d:
         raise HTTPException(status_code=404, detail="Device not found")
+        
+    await manager.send_command_to_device(device_id, {"command": "lock_device"})
     return {"status": "locked"}
 
 
@@ -133,6 +145,8 @@ async def reboot_device(device_id: str, service: MDMService = Depends(get_servic
     ok = await service.repo.add_command(device_id, "reboot_device")
     if not ok:
         raise HTTPException(status_code=404, detail="Device not found")
+    
+    await manager.send_command_to_device(device_id, {"command": "reboot_device"})
     return {"status": "command_sent", "command": "reboot_device"}
 
 @router.post("/devices/{device_id}/wipe")
@@ -140,6 +154,8 @@ async def wipe_device(device_id: str, service: MDMService = Depends(get_service)
     ok = await service.wipe_device(device_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Device not found")
+        
+    await manager.send_command_to_device(device_id, {"command": "wipe_device"})
     return {"status": "command_sent", "command": "wipe_device"}
 
 
@@ -148,6 +164,14 @@ async def checkin_device(device_id: str, payload: Dict, service: MDMService = De
     """Endpoint público para check-in de dispositivos (chamado pelo app Android)
     Nota: Idealmente, dispositivos deveriam usar uma API Key, não JWT de usuário"""
     await service.process_checkin(device_id, payload)
+    
+    # Notifica dashboards que o device piscou o radar
+    await manager.broadcast_to_dashboards({
+        "type": "DEVICE_CHECKIN",
+        "device_id": device_id,
+        "status": "online"
+    })
+    
     return {"status": "checked_in"}
 
 @router.get("/devices/{device_id}/commands/pending", response_model=List[CommandResponse], tags=["Dispositivos"])
@@ -229,6 +253,7 @@ async def create_global_policy(policy_data: PolicyCreate, service: MDMService = 
     devices = await service.list_devices()
     for d in devices:
         await service.repo.add_command(d.device_id, "apply_policy", payload=policy_dict)
+        await manager.send_command_to_device(d.device_id, {"command": "apply_policy", "payload": policy_dict})
         
     return policy
 
@@ -248,6 +273,11 @@ async def apply_policy_to_device(
     ok = await service.apply_policy(device_id, policy_data.model_dump())
     if not ok:
         raise HTTPException(status_code=404, detail="Device not found")
+        
+    await manager.send_command_to_device(device_id, {
+        "command": "apply_policy", 
+        "payload": policy_data.model_dump()
+    })
     return {"status": "applied"}
 
 

@@ -62,6 +62,7 @@ O sistema é formado por três grandes camadas tecnológicas interconectadas:
   - Controllers/Rotas isoladas que filtram requisições REST web.
   - Serviços contendo as pesadas regras de negócio e validações Pydantic.
   - Repositórios com as consultas limpas ao Banco de Dados.
+- **Ecossistema Real-Time (WebSockets):** O servidor FastAPI conta com um Connection Manager capaz de manter túneis TCP bi-direcionais persistentes. Isso permite transmissão contínua e sem delay de Eventos entre Dispositivos Android -> Servidor Central -> Painel Web do Administrador.
 - **Padrão de Enfileiramento (Command Queue):** Todo botão "Wipe" ou "Lock" apertado no Front gera uma *Queue* no banco. A arquitetura de fila suporta as oscilações naturais da internet móvel 4G/5G, garantindo o envio ponta a ponta quando o dispositivo estiver ativo.
 
 ### 3. Android DPC (Módulo Mobile em Kotlin)

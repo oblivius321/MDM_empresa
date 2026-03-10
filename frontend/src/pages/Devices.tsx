@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDevices } from '@/hooks/useDevices';
+import { useMDMWebSocket } from '@/hooks/useMDMWebSocket';
 import { TopBar } from '@/components/TopBar';
 import { StatusBadge } from '@/components/StatusBadge';
 import { Search, ChevronLeft, ChevronRight, Filter, AlertCircle, Eye } from 'lucide-react';
@@ -34,6 +35,9 @@ export default function Devices() {
     refresh,
     lastRefreshed,
   } = useDevices({ autoRefresh: true });
+
+  // ✨ Magia MDM RealTime: Toda vez que o Socket gritar "Modificação", o `refresh` é ativado 
+  useMDMWebSocket(refresh);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
