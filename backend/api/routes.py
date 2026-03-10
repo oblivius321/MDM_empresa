@@ -5,8 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.services.mdm_service import MDMService
 from backend.repositories.device_repo import DeviceRepository
 from backend.core.database import get_db
-from backend.schemas.device import DeviceCreate, DeviceResponse, PolicyCreate, DeviceUpdate, Policy, LogResponse, CommandResponse
+from backend.schemas.device import DeviceCreate, DeviceResponse, PolicyCreate, DeviceUpdate, Policy, LogResponse, CommandResponse, EnrollmentResponse
 from backend.api.auth import get_current_user
+from backend.api.device_auth import get_current_device
+from backend.models.device import Device
 from backend.models.user import User
 import datetime
 
@@ -19,14 +21,14 @@ def get_service(repo: DeviceRepository = Depends(get_repo)) -> MDMService:
     return MDMService(repo)
 
 
-@router.post("/enroll", response_model=DeviceResponse, tags=["Dispositivos"])
+@router.post("/enroll", response_model=EnrollmentResponse, tags=["Dispositivos"])
 async def enroll(
     req: DeviceCreate, 
     service: MDMService = Depends(get_service)
 ):
     """Endpoint público para enroll de dispositivos (chamado pelo app Android)"""
     extra_fields = req.model_dump(exclude={"device_id", "name", "device_type"}, exclude_unset=True)
-    device = await service.enroll_device(req.device_id, req.name, req.device_type, **extra_fields)
+    device, device_token = await service.enroll_device(req.device_id, req.name, req.device_type, **extra_fields)
     
     # Notifica os dashboards de um novo dispositivo na frota
     await manager.broadcast_to_dashboards({
@@ -36,7 +38,10 @@ async def enroll(
         "status": device.status
     })
     
-    return device
+    # Adicionamos manualmente o token ao payload de resposta convertido
+    response_data = device.__dict__.copy()
+    response_data["device_token"] = device_token
+    return response_data
 
 
 @router.get("/devices", response_model=List[DeviceResponse])
@@ -160,9 +165,13 @@ async def wipe_device(device_id: str, service: MDMService = Depends(get_service)
 
 
 @router.post("/devices/{device_id}/checkin", tags=["Dispositivos"])
-async def checkin_device(device_id: str, payload: Dict, service: MDMService = Depends(get_service)):
-    """Endpoint público para check-in de dispositivos (chamado pelo app Android)
-    Nota: Idealmente, dispositivos deveriam usar uma API Key, não JWT de usuário"""
+async def checkin_device(
+    device_id: str, 
+    payload: Dict, 
+    service: MDMService = Depends(get_service),
+    current_device: Device = Depends(get_current_device)
+):
+    """Endpoint restrito para check-in de dispositivos (chamado pelo app Android)"""
     await service.process_checkin(device_id, payload)
     
     # Notifica dashboards que o device piscou o radar
@@ -175,9 +184,12 @@ async def checkin_device(device_id: str, payload: Dict, service: MDMService = De
     return {"status": "checked_in"}
 
 @router.get("/devices/{device_id}/commands/pending", response_model=List[CommandResponse], tags=["Dispositivos"])
-async def get_pending_commands(device_id: str, service: MDMService = Depends(get_service)):
-    """Endpoint público para dispositivos buscarem comandos pendentes
-    Nota: Idealmente, dispositivos deveriam usar uma API Key, não JWT de usuário"""
+async def get_pending_commands(
+    device_id: str, 
+    service: MDMService = Depends(get_service),
+    current_device: Device = Depends(get_current_device)
+):
+    """Endpoint restrito para dispositivos buscarem comandos pendentes"""
     pending = await service.get_pending_commands(device_id)
     return [{"id": str(c.id), "command": c.command, "payload": c.payload} for c in pending]
 
@@ -185,7 +197,8 @@ async def get_pending_commands(device_id: str, service: MDMService = Depends(get
 async def acknowledge_command(
     device_id: str, 
     command_id: int, 
-    service: MDMService = Depends(get_service)
+    service: MDMService = Depends(get_service),
+    current_device: Device = Depends(get_current_device)
 ):
     """Dispositivo reconhece que recebeu o comando"""
     ok = await service.repo.acknowledge_command(command_id)
@@ -198,7 +211,8 @@ async def update_command_status(
     device_id: str, 
     command_id: int, 
     payload: Dict, 
-    service: MDMService = Depends(get_service)
+    service: MDMService = Depends(get_service),
+    current_device: Device = Depends(get_current_device)
 ):
     """Dispositivo reporta status final de execução do comando"""
     status = payload.get("status", "completed")
@@ -220,7 +234,10 @@ async def update_command_status(
 async def get_command_status(
     device_id: str,
     command_id: int,
-    service: MDMService = Depends(get_service)
+    service: MDMService = Depends(get_service),
+    # Permite tanto device quanto user acessarem (no mínimo um deles deve estar logado)
+    # Aqui, para manter a checagem dupla limpa, vamos focar no uso pelo device:
+    current_device: Device = Depends(get_current_device)
 ):
     """Dispositivo ou admin consulta status de um comando"""
     status = await service.repo.get_command_status(command_id)
@@ -231,7 +248,8 @@ async def get_command_status(
 @router.get("/devices/{device_id}/commands/failed", response_model=List[CommandResponse], tags=["Dispositivos"])
 async def get_failed_commands(
     device_id: str,
-    service: MDMService = Depends(get_service)
+    service: MDMService = Depends(get_service),
+    current_device: Device = Depends(get_current_device)
 ):
     """Retorna comandos que falharam para quem tentar reexecutar"""
     failed = await service.repo.get_failed_commands(device_id)

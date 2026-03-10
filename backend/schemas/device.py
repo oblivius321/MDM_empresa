@@ -101,3 +101,7 @@ class DeviceResponse(DeviceBase):
         from_attributes=True,
         populate_by_name=True
     )
+
+class EnrollmentResponse(DeviceResponse):
+    device_token: str
+

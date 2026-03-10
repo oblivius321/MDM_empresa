@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from backend.repositories.device_repo import DeviceRepository
 from backend.models.device import Device
 from backend.models.policy import Policy
@@ -15,20 +15,24 @@ class MDMService:
             await self.repo.add_telemetry(device_id, payload)
 
 
-    async def enroll_device(self, device_id: str, name: str, device_type: str, **kwargs) -> Device:
+    async def enroll_device(self, device_id: str, name: str, device_type: str, **kwargs) -> Tuple[Device, str]:
+        from backend.api.device_auth import create_device_token
+        token, token_hash = create_device_token(device_id)
+        
         device = await self.repo.get(device_id)
         if device:
             # Device exists, update status and other fields
-            updates = {"is_active": True, **kwargs}
+            updates = {"is_active": True, "api_key_hash": token_hash, **kwargs}
             updated_device = await self.repo.update_device(device_id, updates)
             if updated_device:
-                return updated_device
-            return device # Fallback if update fails
+                return updated_device, token
+            return device, token # Fallback if update fails
         
         # New device
         # Pass kwargs to constructor
-        new_device = Device(device_id=device_id, name=name, device_type=device_type, is_active=True, status="online", **kwargs)
-        return await self.repo.add(new_device)
+        new_device = Device(device_id=device_id, name=name, device_type=device_type, is_active=True, status="online", api_key_hash=token_hash, **kwargs)
+        added = await self.repo.add(new_device)
+        return added, token
 
     async def update_device(self, device_id: str, updates: Dict) -> Optional[Device]:
         return await self.repo.update_device(device_id, updates)

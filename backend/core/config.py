@@ -20,3 +20,13 @@ SECRET_KEY = os.getenv("SECRET_KEY", "elion-mdm-secret-key-enterprise-edition-20
 # Configurações adicionais
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+
+if ENVIRONMENT == "production" and (
+    os.getenv("SECRET_KEY") is None or 
+    SECRET_KEY == "elion-mdm-secret-key-enterprise-edition-2026" or 
+    os.getenv("DB_PASSWORD") is None
+):
+    raise ValueError(
+        "CRITICAL: Ambiente configurado como production, mas SECRET_KEY ou DB_PASSWORD estão ausentes ou usando padrões inseguros."
+    )
+

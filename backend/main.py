@@ -6,6 +6,12 @@ import os
 from dotenv import load_dotenv
 from pathlib import Path
 
+# Load all models for SQLAlchemy registry
+import backend.models.user
+import backend.models.device
+import backend.models.policy
+import backend.models.telemetry
+
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
@@ -13,6 +19,13 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="MDM Projeto", lifespan=lifespan)
+
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from backend.core.limiter import limiter
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -24,13 +37,24 @@ if env_path.exists():
 # Configurar CORS a partir de variáveis de ambiente
 allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000,http://localhost:8000").split(",")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Em desenvolvimento, permite dinamicamente acessos para testes móveis
+if os.getenv("ENVIRONMENT", "development") != "production":
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins,
+        allow_origin_regex=r"^https?://.*$",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 from backend.api import websocket_routes
 

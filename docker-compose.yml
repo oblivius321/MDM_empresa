@@ -6,18 +6,21 @@ services:
     image: postgres:15-alpine
     container_name: elion-mdm-postgres
     environment:
+      # Lidos do .env raiz
       POSTGRES_USER: ${DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-Sherlock314}
+      POSTGRES_PASSWORD: ${DB_PASSWORD?A senha do banco precisa ser configurada no .env}
       POSTGRES_DB: ${DB_NAME:-mdm_project}
     ports:
+      # Porta 5432 mapeada para o Host (Permite seu pgAdmin local acessar via localhost:5432)
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - elion-network
+    # IMPORTANTE: Healthcheck garante que o banco ligou antes do backend subir
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
-      interval: 10s
+      test: [ "CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-mdm_project}" ]
+      interval: 5s
       timeout: 5s
       retries: 5
 
@@ -28,23 +31,26 @@ services:
       dockerfile: Dockerfile.backend
     container_name: elion-mdm-backend
     environment:
-      DATABASE_URL: postgresql+asyncpg://${DB_USER:-postgres}:${DB_PASSWORD:-Sherlock314}@postgres:5432/${DB_NAME:-mdm_project}
-      SECRET_KEY: ${SECRET_KEY:-elion-mdm-secret-key-enterprise-edition-2026}
-      DEBUG: ${DEBUG:-False}
-      ENVIRONMENT: ${ENVIRONMENT:-production}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8080}
+      # IMPORTANTE: Dentro da rede Docker, o backend enxerga o banco pelo nome do servico 'postgres'
+      # NOTA: Usar DATABASE_URL_DOCKER que sobrepõe a DATABASE_URL para forçar conexão "postgres:5432"
+      DATABASE_URL: postgresql+asyncpg://${DB_USER:-postgres}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-mdm_project}
+      SECRET_KEY: ${SECRET_KEY?Missing SECRET_KEY}
+      DEBUG: ${DEBUG:-True}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
     ports:
+      # A porta 8000 mapeada para o seu SO testar a API no navegador
       - "8000:8000"
     depends_on:
       postgres:
-        condition: service_healthy
+        condition: service_healthy # Só sobe quando o Postgres diz que está pronto
     volumes:
       - ./backend:/app/backend:ro
     networks:
       - elion-network
     command: >
       sh -c "python migrate_sqlite_to_postgres.py &&
-             uvicorn backend.main:app --host 0.0.0.0 --port 8000"
+             uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload"
 
   # ===== Frontend Vite + Node =====
   frontend:
@@ -53,7 +59,7 @@ services:
       dockerfile: Dockerfile
     container_name: elion-mdm-frontend
     environment:
-      VITE_API_BASE_URL: http://backend:8000/api
+      VITE_API_BASE_URL: http://localhost:8000/api
     ports:
       - "3000:3000"
     depends_on:
@@ -63,9 +69,9 @@ services:
       - /app/node_modules
     networks:
       - elion-network
-    command: npm run dev -- --host 0.0.0.0
+    command: npm run dev -- --host 0.0.0.0 --port 3000
 
-  # ===== Nginx Reverse Proxy (Optional) =====
+  # ===== Nginx Reverse Proxy (Opcional - útil na Fase de Produção) =====
   nginx:
     image: nginx:alpine
     container_name: elion-mdm-nginx
@@ -86,5 +92,6 @@ networks:
     driver: bridge
 
 volumes:
+  # Volume para reter os dados do banco mesmo que os containers sejam destruídos
   postgres_data:
     driver: local

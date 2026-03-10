@@ -1,15 +1,34 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, status
 from backend.api.websockets import manager
+from backend.core.security import SECRET_KEY, ALGORITHM
+from jose import jwt, JWTError
+from sqlalchemy.future import select
+from backend.core.database import async_session_maker
+from backend.models.device import Device
+from backend.api.device_auth import verify_device_token
 import logging
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.websocket("/ws/dashboard")
-async def websocket_dashboard(websocket: WebSocket):
+async def websocket_dashboard(websocket: WebSocket, token: str = Query(None)):
     """
     Endpoint para painéis React se conectarem para receberem eventos em tempo real
     """
+    if not token:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+        
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        if not email:
+            raise JWTError()
+    except JWTError:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
     await manager.connect_dashboard(websocket)
     try:
         while True:
@@ -22,11 +41,28 @@ async def websocket_dashboard(websocket: WebSocket):
         logger.info("Conexão com Dashboard perdida")
 
 @router.websocket("/ws/device/{device_id}")
-async def websocket_device(websocket: WebSocket, device_id: str):
+async def websocket_device(websocket: WebSocket, device_id: str, token: str = Query(None)):
     """
     Endpoint exclusivo para cliente Android segurar uma conexão contínua com nosso servidor.
     Dessa forma injetamos Wipe/Lock direto no túnel deles sem gastar cotas do Firebase e na mesma fração de segundo.
     """
+    if not token:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+    
+    # Validar token do device
+    async with async_session_maker() as db:
+        result = await db.execute(select(Device).where(Device.device_id == device_id))
+        device = result.scalar_one_or_none()
+        
+        if not device or not device.is_active or not device.api_key_hash:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+            
+        if not verify_device_token(token, device.api_key_hash):
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
     await manager.connect_device(websocket, device_id)
     try:
         while True:

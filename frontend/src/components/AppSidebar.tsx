@@ -1,4 +1,5 @@
-import { NavLink as RouterNavLink, useLocation } from 'react-router-dom';
+import { NavLink as RouterNavLink, useLocation, useNavigate } from 'react-router-dom';
+import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import {
   LayoutDashboard,
@@ -20,6 +21,13 @@ const navItems = [
 
 export function AppSidebar() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { logout, user } = useAuth();
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login');
+  };
 
   return (
     <aside className="w-60 min-h-screen flex-shrink-0 bg-[hsl(var(--sidebar-background))] border-r border-sidebar-border flex flex-col">
@@ -69,15 +77,12 @@ export function AppSidebar() {
             A
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-foreground truncate">Administrador</p>
-            <p className="text-xs text-muted-foreground truncate">admin@empresa.com</p>
+            <p className="text-sm font-medium text-foreground truncate">{user?.is_admin ? 'Administrador' : 'Operador'}</p>
+            <p className="text-xs text-muted-foreground truncate">{user?.email || 'usuario@elion'}</p>
           </div>
           <button
             title="Sair"
-            onClick={() => {
-              localStorage.removeItem('auth_token');
-              window.location.href = '/login';
-            }}
+            onClick={handleLogout}
             className="p-1.5 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
           >
             <LogOut className="w-4 h-4" />

@@ -7,7 +7,6 @@ interface User {
 
 interface AuthContextType {
   user: User | null;
-  token: string | null;
   loading: boolean;
   isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<boolean>;
@@ -20,25 +19,21 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Restaurar sessão ao iniciar
   useEffect(() => {
-    const savedToken = localStorage.getItem('auth_token');
     const savedUser = localStorage.getItem('auth_user');
-    
-    if (savedToken && savedUser) {
+
+    if (savedUser) {
       try {
-        setToken(savedToken);
         setUser(JSON.parse(savedUser));
       } catch (err) {
         console.error('Erro ao restaurar sessão:', err);
-        localStorage.removeItem('auth_token');
         localStorage.removeItem('auth_user');
       }
     }
-    
+
     setLoading(false);
   }, []);
 
@@ -48,30 +43,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         `http://${window.location.hostname}:8000/api/auth/login`,
         {
           method: 'POST',
+          credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, password }),
         }
       );
 
       if (!response.ok) {
+        if (response.status === 429) {
+          throw new Error("Muitas tentativas de login. Tente novamente em alguns minutos.");
+        }
         const error = await response.json();
         throw new Error(error.detail || 'Falha na autenticação');
       }
 
       const data = await response.json();
-      
-      // Decodificar JWT para extrair dados do usuário
-      const payload = JSON.parse(atob(data.access_token.split('.')[1]));
+
       const userPayload = {
-        email: payload.sub,
-        is_admin: payload.is_admin || false,
+        email: data.user.email,
+        is_admin: data.user.is_admin || false,
       };
 
-      setToken(data.access_token);
       setUser(userPayload);
 
-      // Salvar no localStorage de forma segura
-      localStorage.setItem('auth_token', data.access_token);
+      // Salvar apenas dados não-sensíveis no localStorage
       localStorage.setItem('auth_user', JSON.stringify(userPayload));
 
       return true;
@@ -103,6 +98,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       );
 
       if (!response.ok) {
+        if (response.status === 429) {
+          throw new Error("Muitas tentativas de cadastro. Tente novamente em alguns minutos.");
+        }
         const error = await response.json();
         throw new Error(error.detail || 'Falha no cadastro');
       }
@@ -114,26 +112,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const logout = () => {
+  const logout = async () => {
+    try {
+      await fetch(`http://${window.location.hostname}:8000/api/auth/logout`, {
+        method: 'POST',
+        credentials: 'include'
+      });
+    } catch (e) { /* ignore */ }
+
     setUser(null);
-    setToken(null);
-    localStorage.removeItem('auth_token');
     localStorage.removeItem('auth_user');
   };
 
   const refreshToken = async (): Promise<boolean> => {
-    // Implementar refresh token se usar refresh tokens
-    // Por enquanto, JWT tem expiração de 7 dias
-    return !!token;
+    return !!user;
   };
 
   return (
     <AuthContext.Provider
       value={{
         user,
-        token,
         loading,
-        isAuthenticated: !!token && !!user,
+        isAuthenticated: !!user,
         login,
         register,
         logout,
