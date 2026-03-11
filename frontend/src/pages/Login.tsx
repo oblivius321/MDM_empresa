@@ -7,12 +7,14 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Shield, ArrowRight, UserPlus, ArrowLeft } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
+import ForgotPassword from '@/components/ForgotPassword';
 
 export default function Login() {
     const navigate = useNavigate();
     const { toast } = useToast();
     const { login, register, isAuthenticated } = useAuth();
     const [isRegistering, setIsRegistering] = useState(false);
+    const [isForgotPassword, setIsForgotPassword] = useState(false);
     const [loading, setLoading] = useState(false);
 
     // Form states - Login
@@ -20,6 +22,8 @@ export default function Login() {
     const [password, setPassword] = useState('');
 
     // Form states - Register
+    const [securityQuestion, setSecurityQuestion] = useState('');
+    const [securityAnswer, setSecurityAnswer] = useState('');
     const [adminEmail, setAdminEmail] = useState('');
     const [adminPassword, setAdminPassword] = useState('');
 
@@ -74,7 +78,7 @@ export default function Login() {
     const handleRegister = async (e: React.FormEvent) => {
         e.preventDefault();
 
-        if (!email || !password || !adminEmail || !adminPassword) {
+        if (!email || !password || !adminEmail || !adminPassword || !securityQuestion || !securityAnswer) {
             toast({
                 title: 'Falha no Cadastro',
                 description: 'Preencha todos os campos.',
@@ -86,7 +90,7 @@ export default function Login() {
         setLoading(true);
 
         try {
-            const success = await register(email, password, adminEmail, adminPassword);
+            const success = await register(email, password, securityQuestion, securityAnswer, adminEmail, adminPassword);
             
             if (success) {
                 toast({
@@ -96,6 +100,8 @@ export default function Login() {
                 setIsRegistering(false);
                 setEmail('');
                 setPassword('');
+                setSecurityQuestion('');
+                setSecurityAnswer('');
                 setAdminEmail('');
                 setAdminPassword('');
             } else {
@@ -136,69 +142,30 @@ export default function Login() {
                     </span>
                 </div>
 
-                <Card className="card-glass border border-border/50 shadow-2xl backdrop-blur-md">
-                    <CardHeader className="space-y-1 pb-4">
-                        <CardTitle className="text-2xl font-bold tracking-tight">
-                            {isRegistering ? 'Cadastrar Novo Operador' : 'Acesso ao Sistema'}
-                        </CardTitle>
-                        <CardDescription className="text-sm">
-                            {isRegistering
-                                ? 'Autorização de administrador necessária para criar credenciais.'
-                                : 'Insira suas credenciais corporativas para continuar'}
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        {!isRegistering ? (
-                            <form onSubmit={handleLogin} className="space-y-4">
-                                <div className="space-y-2">
-                                    <Label htmlFor="email">Email Corporativo</Label>
-                                    <Input
-                                        id="email"
-                                        type="email"
-                                        placeholder="admin@empresa.com"
-                                        className="bg-background/50"
-                                        value={email}
-                                        onChange={(e) => setEmail(e.target.value)}
-                                        required
-                                    />
-                                </div>
-                                <div className="space-y-2">
-                                    <div className="flex items-center justify-between">
-                                        <Label htmlFor="password">Senha</Label>
-                                        <a href="#" className="text-xs text-primary hover:underline" onClick={(e) => e.preventDefault()}>
-                                            Esqueceu a senha?
-                                        </a>
-                                    </div>
-                                    <Input
-                                        id="password"
-                                        type="password"
-                                        placeholder="••••••••"
-                                        className="bg-background/50"
-                                        value={password}
-                                        onChange={(e) => setPassword(e.target.value)}
-                                        required
-                                    />
-                                </div>
-
-                                <Button type="submit" className="w-full font-medium mt-6" disabled={loading}>
-                                    {loading ? 'Autenticando...' : 'Entrar na Plataforma'}
-                                    {!loading && <ArrowRight className="w-4 h-4 ml-2" />}
-                                </Button>
-                            </form>
-                        ) : (
-                            <form onSubmit={handleRegister} className="space-y-5">
-                                {/* New User Section */}
-                                <div className="space-y-3 p-4 bg-muted/20 border border-border/50 rounded-lg">
-                                    <div className="flex items-center gap-2 mb-1 text-sm font-semibold text-foreground">
-                                        <UserPlus className="w-4 h-4 text-primary" />
-                                        <span>Dados do Novo Operador</span>
-                                    </div>
+                {/* Se está na tela de recuperação de senha, mostra o componente */}
+                {isForgotPassword ? (
+                    <ForgotPassword onBack={() => setIsForgotPassword(false)} />
+                ) : (
+                    <Card className="card-glass border border-border/50 shadow-2xl backdrop-blur-md">
+                        <CardHeader className="space-y-1 pb-4">
+                            <CardTitle className="text-2xl font-bold tracking-tight">
+                                {isRegistering ? 'Cadastrar Novo Operador' : 'Acesso ao Sistema'}
+                            </CardTitle>
+                            <CardDescription className="text-sm">
+                                {isRegistering
+                                    ? 'Autorização de administrador necessária para criar credenciais.'
+                                    : 'Insira suas credenciais corporativas para continuar'}
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            {!isRegistering ? (
+                                <form onSubmit={handleLogin} className="space-y-4">
                                     <div className="space-y-2">
-                                        <Label htmlFor="new-email">Email do Operador</Label>
+                                        <Label htmlFor="email">Email Corporativo</Label>
                                         <Input
-                                            id="new-email"
+                                            id="email"
                                             type="email"
-                                            placeholder="operador@empresa.com.br"
+                                            placeholder="admin@empresa.com"
                                             className="bg-background/50"
                                             value={email}
                                             onChange={(e) => setEmail(e.target.value)}
@@ -206,9 +173,18 @@ export default function Login() {
                                         />
                                     </div>
                                     <div className="space-y-2">
-                                        <Label htmlFor="new-password">Senha de Acesso</Label>
+                                        <div className="flex items-center justify-between">
+                                            <Label htmlFor="password">Senha</Label>
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsForgotPassword(true)}
+                                                className="text-xs text-primary hover:underline"
+                                            >
+                                                Esqueceu a senha?
+                                            </button>
+                                        </div>
                                         <Input
-                                            id="new-password"
+                                            id="password"
                                             type="password"
                                             placeholder="••••••••"
                                             className="bg-background/50"
@@ -217,70 +193,139 @@ export default function Login() {
                                             required
                                         />
                                     </div>
-                                </div>
 
-                                {/* Admin Auth Section */}
-                                <div className="space-y-3 p-4 bg-primary/5 border border-primary/20 rounded-lg">
-                                    <div className="flex items-center gap-2 mb-1 text-sm font-semibold text-primary">
-                                        <Shield className="w-4 h-4" />
-                                        <span>Autorização de Administrador</span>
+                                    <Button type="submit" className="w-full font-medium mt-6" disabled={loading}>
+                                        {loading ? 'Autenticando...' : 'Entrar na Plataforma'}
+                                        {!loading && <ArrowRight className="w-4 h-4 ml-2" />}
+                                    </Button>
+                                </form>
+                            ) : (
+                                <form onSubmit={handleRegister} className="space-y-5">
+                                    {/* New User Section */}
+                                    <div className="space-y-3 p-4 bg-muted/20 border border-border/50 rounded-lg max-h-96 overflow-y-auto">
+                                        <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-foreground sticky top-0 bg-muted/20">
+                                            <UserPlus className="w-4 h-4 text-primary" />
+                                            <span>Dados do Novo Operador</span>
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label htmlFor="new-email">Email do Operador</Label>
+                                            <Input
+                                                id="new-email"
+                                                type="email"
+                                                placeholder="operador@empresa.com.br"
+                                                className="bg-background/50"
+                                                value={email}
+                                                onChange={(e) => setEmail(e.target.value)}
+                                                required
+                                            />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label htmlFor="new-password">Senha de Acesso</Label>
+                                            <Input
+                                                id="new-password"
+                                                type="password"
+                                                placeholder="••••••••"
+                                                className="bg-background/50"
+                                                value={password}
+                                                onChange={(e) => setPassword(e.target.value)}
+                                                required
+                                            />
+                                        </div>
+                                        
+                                        {/* Security Question Section */}
+                                        <div className="pt-3 border-t border-border/30">
+                                            <p className="text-xs font-semibold text-muted-foreground mb-3">Pergunta de Segurança (para recuperação de senha)</p>
+                                            <div className="space-y-2">
+                                                <Label htmlFor="security-question">Crie uma Pergunta</Label>
+                                                <Input
+                                                    id="security-question"
+                                                    type="text"
+                                                    placeholder="Ex: Qual é o nome do seu primeiro animal de estimação?"
+                                                    className="bg-background/50 text-sm"
+                                                    value={securityQuestion}
+                                                    onChange={(e) => setSecurityQuestion(e.target.value)}
+                                                    required
+                                                />
+                                            </div>
+                                            <div className="space-y-2 mt-2">
+                                                <Label htmlFor="security-answer">Resposta</Label>
+                                                <Input
+                                                    id="security-answer"
+                                                    type="text"
+                                                    placeholder="Ex: Roxo"
+                                                    className="bg-background/50 text-sm"
+                                                    value={securityAnswer}
+                                                    onChange={(e) => setSecurityAnswer(e.target.value)}
+                                                    required
+                                                />
+                                            </div>
+                                            <p className="text-xs text-muted-foreground mt-2">💡 Use uma pergunta e resposta que só você saiba</p>
+                                        </div>
                                     </div>
-                                    <div className="space-y-2">
-                                        <Label htmlFor="admin-email">Líder (Email)</Label>
-                                        <Input
-                                            id="admin-email"
-                                            type="email"
-                                            placeholder="admin@empresa.com"
-                                            className="bg-background/50 border-primary/20"
-                                            value={adminEmail}
-                                            onChange={(e) => setAdminEmail(e.target.value)}
-                                            required
-                                        />
-                                    </div>
-                                    <div className="space-y-2">
-                                        <Label htmlFor="admin-password">Líder (Senha)</Label>
-                                        <Input
-                                            id="admin-password"
-                                            type="password"
-                                            placeholder="••••••••"
-                                            className="bg-background/50 border-primary/20"
-                                            value={adminPassword}
-                                            onChange={(e) => setAdminPassword(e.target.value)}
-                                            required
-                                        />
-                                    </div>
-                                </div>
 
-                                <Button type="submit" className="w-full font-medium text-white shadow-primary" disabled={loading}>
-                                    {loading ? 'Processando autorização...' : 'Cadastrar Operador'}
-                                </Button>
-                            </form>
-                        )}
-                    </CardContent>
-                    <CardFooter className="flex justify-center border-t border-border/50 pt-4 pb-6">
-                        {!isRegistering ? (
-                            <p className="text-xs text-muted-foreground">
-                                Deseja adicionar um novo administrador?{' '}
+                                    {/* Admin Auth Section */}
+                                    <div className="space-y-3 p-4 bg-primary/5 border border-primary/20 rounded-lg">
+                                        <div className="flex items-center gap-2 mb-1 text-sm font-semibold text-primary">
+                                            <Shield className="w-4 h-4" />
+                                            <span>Autorização de Administrador</span>
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label htmlFor="admin-email">Líder (Email)</Label>
+                                            <Input
+                                                id="admin-email"
+                                                type="email"
+                                                placeholder="admin@empresa.com"
+                                                className="bg-background/50 border-primary/20"
+                                                value={adminEmail}
+                                                onChange={(e) => setAdminEmail(e.target.value)}
+                                                required
+                                            />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label htmlFor="admin-password">Líder (Senha)</Label>
+                                            <Input
+                                                id="admin-password"
+                                                type="password"
+                                                placeholder="••••••••"
+                                                className="bg-background/50 border-primary/20"
+                                                value={adminPassword}
+                                                onChange={(e) => setAdminPassword(e.target.value)}
+                                                required
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <Button type="submit" className="w-full font-medium text-white shadow-primary" disabled={loading}>
+                                        {loading ? 'Processando autorização...' : 'Cadastrar Operador'}
+                                    </Button>
+                                </form>
+                            )}
+                        </CardContent>
+                        <CardFooter className="flex justify-center border-t border-border/50 pt-4 pb-6">
+                            {!isRegistering ? (
+                                <p className="text-xs text-muted-foreground">
+                                    Deseja adicionar um novo administrador?{' '}
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsRegistering(true)}
+                                        className="font-medium text-primary hover:underline transition-all"
+                                    >
+                                        Registrar usuário
+                                    </button>
+                                </p>
+                            ) : (
                                 <button
                                     type="button"
-                                    onClick={() => setIsRegistering(true)}
-                                    className="font-medium text-primary hover:underline transition-all"
+                                    onClick={() => setIsRegistering(false)}
+                                    className="flex items-center text-xs font-medium text-muted-foreground hover:text-foreground transition-all"
                                 >
-                                    Registrar usuário
+                                    <ArrowLeft className="w-3 h-3 mr-1" />
+                                    Voltar para o login
                                 </button>
-                            </p>
-                        ) : (
-                            <button
-                                type="button"
-                                onClick={() => setIsRegistering(false)}
-                                className="flex items-center text-xs font-medium text-muted-foreground hover:text-foreground transition-all"
-                            >
-                                <ArrowLeft className="w-3 h-3 mr-1" />
-                                Voltar para o login
-                            </button>
-                        )}
-                    </CardFooter>
-                </Card>
+                            )}
+                        </CardFooter>
+                    </Card>
+                )}
 
                 <div className="text-center mt-8 text-xs text-muted-foreground/60">
                     <p>© 2026 Elion MDM Enterprise. Todos os direitos reservados.</p>

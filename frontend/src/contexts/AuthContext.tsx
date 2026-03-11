@@ -10,7 +10,7 @@ interface AuthContextType {
   loading: boolean;
   isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<boolean>;
-  register: (email: string, password: string, adminEmail: string, adminPassword: string) => Promise<boolean>;
+  register: (email: string, password: string, securityQuestion: string, securityAnswer: string, adminEmail: string, adminPassword: string) => Promise<boolean>;
   logout: () => void;
   refreshToken: () => Promise<boolean>;
 }
@@ -79,6 +79,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const register = async (
     email: string,
     password: string,
+    securityQuestion: string,
+    securityAnswer: string,
     adminEmail: string,
     adminPassword: string
   ): Promise<boolean> => {
@@ -91,6 +93,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           body: JSON.stringify({
             email,
             password,
+            security_question: securityQuestion,
+            security_answer: securityAnswer,
             admin_email: adminEmail,
             admin_password: adminPassword,
           }),
