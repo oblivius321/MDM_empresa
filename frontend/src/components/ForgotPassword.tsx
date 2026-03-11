@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ArrowLeft, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { apiClient } from '@/services/api';
+import { api } from '@/services/api';
 
 type ForgotPasswordStep = 'email' | 'security-question' | 'new-password' | 'success';
 
@@ -45,7 +45,7 @@ export default function ForgotPassword({ onBack }: ForgotPasswordProps) {
         setLoading(true);
 
         try {
-            const response = await apiClient.post('/auth/forgot-password', {
+            const response = await api.post('/auth/forgot-password', {
                 email
             });
 
@@ -83,7 +83,7 @@ export default function ForgotPassword({ onBack }: ForgotPasswordProps) {
         setLoading(true);
 
         try {
-            const response = await apiClient.post('/auth/verify-security-answer', {
+            const response = await api.post('/auth/verify-security-answer', {
                 email,
                 security_answer: securityAnswer
             });
@@ -132,7 +132,7 @@ export default function ForgotPassword({ onBack }: ForgotPasswordProps) {
         setLoading(true);
 
         try {
-            await apiClient.post('/auth/reset-password', {
+            await api.post('/auth/reset-password', {
                 email,
                 new_password: newPassword,
                 confirm_password: confirmPassword
@@ -142,7 +142,7 @@ export default function ForgotPassword({ onBack }: ForgotPasswordProps) {
 
             toast({
                 title: 'Sucesso!',
-                description: 'Sua senha foi atualizada. Vous pouvez agora fazer login com a nova senha.',
+                description: 'Sua senha foi atualizada. Você pode agora fazer login com a nova senha.',
             });
 
             // Redireciona para login após 2 segundos
