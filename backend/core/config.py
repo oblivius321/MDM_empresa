@@ -2,8 +2,12 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-env_path = Path(__file__).resolve().parent.parent / ".env"
+env_path = Path(__file__).resolve().parent.parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
+
+# Configurações de Ambiente (definir primeiro para usar em lógica condicional)
+DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 
 # PostgreSQL é o padrão para produção
 # SQLite é apenas para desenvolvimento local rápido
@@ -15,18 +19,16 @@ if not DATABASE_URL:
     )
 
 # Para usar SQLite localmente, defina: DATABASE_URL=sqlite+aiosqlite:///./mdm_database.db
-SECRET_KEY = os.getenv("SECRET_KEY", "elion-mdm-secret-key-enterprise-edition-2026")
+# ⚠️ SEGURANÇA: Gere uma chave única por instância com:
+# python -c "import secrets; print(secrets.token_urlsafe(32))"
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError("CRÍTICO: SECRET_KEY obrigatória. Defina via variável de ambiente ou no .env.")
 
-# Configurações adicionais
-DEBUG = os.getenv("DEBUG", "False").lower() == "true"
-ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
-
-if ENVIRONMENT == "production" and (
-    os.getenv("SECRET_KEY") is None or 
-    SECRET_KEY == "elion-mdm-secret-key-enterprise-edition-2026" or 
-    os.getenv("DB_PASSWORD") is None
-):
-    raise ValueError(
-        "CRITICAL: Ambiente configurado como production, mas SECRET_KEY ou DB_PASSWORD estão ausentes ou usando padrões inseguros."
-    )
+# Bootstrap Secret para Enroll Seguro
+# Impede que qualquer app Android que saiba o device_id consiga fazer enroll
+# Gere com: python -c "import secrets; print(secrets.token_urlsafe(24))"
+BOOTSTRAP_SECRET = os.getenv("BOOTSTRAP_SECRET")
+if not BOOTSTRAP_SECRET:
+    raise ValueError("CRÍTICO: BOOTSTRAP_SECRET obrigatória. Defina via variável de ambiente ou no .env.")
 

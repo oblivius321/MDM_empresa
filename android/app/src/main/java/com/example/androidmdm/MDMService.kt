@@ -53,6 +53,9 @@ class MDMService : Service() {
         kioskLauncher = KioskLauncher(this)
         screenCaptureManager = ScreenCaptureManager(this)
         
+        // Inicializa cliente REST Seguro com o Token atual
+        RetrofitClient.init(this)
+        
         // Instancia o cliente socket
         webSocketClient = MDMWebSocketClient(this, getOrCreateDeviceId())
         

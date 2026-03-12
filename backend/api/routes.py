@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Request, status
 from typing import List, Dict, Optional
 from backend.api.websockets import manager
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,11 +6,14 @@ from backend.services.mdm_service import MDMService
 from backend.repositories.device_repo import DeviceRepository
 from backend.core.database import get_db
 from backend.schemas.device import DeviceCreate, DeviceResponse, PolicyCreate, DeviceUpdate, Policy, LogResponse, CommandResponse, EnrollmentResponse
+from backend.schemas.user import DeviceEnrollRequest
 from backend.api.auth import get_current_user
 from backend.api.device_auth import get_current_device
+from backend.core.limiter import limiter
 from backend.models.device import Device
 from backend.models.user import User
 import datetime
+import os
 
 router = APIRouter()
 
@@ -21,27 +24,87 @@ def get_service(repo: DeviceRepository = Depends(get_repo)) -> MDMService:
     return MDMService(repo)
 
 
-@router.post("/enroll", response_model=EnrollmentResponse, tags=["Dispositivos"])
+# ============= ENROLL SEGURO COM BOOTSTRAP_SECRET =============
+@router.post("/enroll", response_model=dict, tags=["Dispositivos"])
+@limiter.limit("10/hour")
 async def enroll(
-    req: DeviceCreate, 
-    service: MDMService = Depends(get_service)
+    request: Request,
+    req: DeviceEnrollRequest, 
+    service: MDMService = Depends(get_service),
+    db: AsyncSession = Depends(get_db)
 ):
-    """Endpoint público para enroll de dispositivos (chamado pelo app Android)"""
-    extra_fields = req.model_dump(exclude={"device_id", "name", "device_type"}, exclude_unset=True)
-    device, device_token = await service.enroll_device(req.device_id, req.name, req.device_type, **extra_fields)
+    """
+    Enroll SEGURO de dispositivo Android.
     
-    # Notifica os dashboards de um novo dispositivo na frota
-    await manager.broadcast_to_dashboards({
-        "type": "DEVICE_ENROLLED",
-        "device_id": device.device_id,
-        "name": device.name,
-        "status": device.status
-    })
+    Valida:
+    1. BOOTSTRAP_SECRET correto (impede takeover por device_id)
+    2. device_id único ou atualização legítima
+    3. Limita 10 enrolls por hora por IP (DDoS)
     
-    # Adicionamos manualmente o token ao payload de resposta convertido
-    response_data = device.__dict__.copy()
-    response_data["device_token"] = device_token
-    return response_data
+    Retorna:
+    - device_token para comunicação futura
+    - api_url para o device conectar
+    """
+    from backend.core.config import BOOTSTRAP_SECRET
+    from backend.api.device_auth import create_device_token
+    
+    # ⚠️ CRÍTICO: Validar bootstrap secret
+    if not req.bootstrap_secret or req.bootstrap_secret != BOOTSTRAP_SECRET:
+        # Log para detecção de ataque
+        import logging
+        logger = logging.getLogger("security")
+        logger.warning(f"⚠️ ENROLL ATTEMPT COM BOOTSTRAP_SECRET INVÁLIDO: device_id={req.device_id}, ip={request.client.host}")
+        
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bootstrap secret inválido. Entre em contato com seu administrador."
+        )
+    
+    # Validar campos básicos
+    if not req.device_id or len(req.device_id) < 1 or len(req.device_id) > 255:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="device_id inválido"
+        )
+    
+    if not req.name or len(req.name) < 1 or len(req.name) > 255:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="name inválido"
+        )
+    
+    try:
+        # Chamar service para enroll device
+        device, device_token = await service.enroll_device(
+            req.device_id, 
+            req.name, 
+            req.device_type,
+            **(req.extra_data or {})
+        )
+        
+        # Notificar dashboards de novo device
+        await manager.broadcast_to_dashboards({
+            "type": "DEVICE_ENROLLED",
+            "device_id": device.device_id,
+            "name": device.name,
+            "status": device.status
+        })
+        
+        return {
+            "message": "Dispositivo enrolled com sucesso",
+            "device_id": device.device_id,
+            "device_token": device_token,
+            "api_url": os.getenv("API_URL", "http://localhost:8000"),
+            "enrollment_status": "success"
+        }
+    except Exception as e:
+        import logging
+        logger = logging.getLogger("error")
+        logger.error(f"Erro durante enroll: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erro ao processar enroll"
+        )
 
 
 @router.get("/devices", response_model=List[DeviceResponse])
@@ -165,13 +228,23 @@ async def wipe_device(device_id: str, service: MDMService = Depends(get_service)
 
 
 @router.post("/devices/{device_id}/checkin", tags=["Dispositivos"])
+@limiter.limit("30/minute")
 async def checkin_device(
+    request: Request,
     device_id: str, 
     payload: Dict, 
     service: MDMService = Depends(get_service),
     current_device: Device = Depends(get_current_device)
 ):
     """Endpoint restrito para check-in de dispositivos (chamado pelo app Android)"""
+    # ✅ SEGURANÇA (P1.1): Valida que device_id da URL corresponde ao device do token
+    if current_device.device_id != device_id:
+        import logging
+        logger = logging.getLogger("security")
+        logger.error(f"⚠️ DEVICE MISMATCH (checkin): token={current_device.device_id}, url={device_id}")
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Unauthorized device")
+        
     await service.process_checkin(device_id, payload)
     
     # Notifica dashboards que o device piscou o radar
@@ -190,6 +263,14 @@ async def get_pending_commands(
     current_device: Device = Depends(get_current_device)
 ):
     """Endpoint restrito para dispositivos buscarem comandos pendentes"""
+    # ✅ SEGURANÇA (P1.1): Valida que device_id da URL corresponde ao device do token
+    if current_device.device_id != device_id:
+        import logging
+        logger = logging.getLogger("security")
+        logger.error(f"⚠️ DEVICE MISMATCH (pending_commands): token={current_device.device_id}, url={device_id}")
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Unauthorized device")
+        
     pending = await service.get_pending_commands(device_id)
     return [{"id": str(c.id), "command": c.command, "payload": c.payload} for c in pending]
 
@@ -200,8 +281,21 @@ async def acknowledge_command(
     service: MDMService = Depends(get_service),
     current_device: Device = Depends(get_current_device)
 ):
-    """Dispositivo reconhece que recebeu o comando"""
-    ok = await service.repo.acknowledge_command(command_id)
+    """
+    Dispositivo reconhece que recebeu o comando.
+    
+    ✅ SEGURO (P1.1): Valida que device_id da URL corresponde ao device do token.
+    Previne device A de reconhecer comando de device B.
+    """
+    # Validar que current_device pertence a este device_id
+    if current_device.device_id != device_id:
+        import logging
+        logger = logging.getLogger("security")
+        logger.error(f"⚠️ DEVICE MISMATCH: token={current_device.device_id}, url={device_id}")
+        raise HTTPException(status_code=403, detail="Unauthorized device")
+    
+    # Usar método seguro que valida propriedade
+    ok = await service.repo.acknowledge_command_secure(device_id, command_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Command not found")
     return {"status": "acknowledged", "command_id": command_id}
@@ -214,14 +308,27 @@ async def update_command_status(
     service: MDMService = Depends(get_service),
     current_device: Device = Depends(get_current_device)
 ):
-    """Dispositivo reporta status final de execução do comando"""
+    """
+    Dispositivo reporta status final de execução do comando.
+    
+    ✅ SEGURO (P1.1): Valida ownership do comando antes de atualizar.
+    Previne device A de modificar status de comando de device B.
+    """
+    # Validar que current_device pertence a este device_id
+    if current_device.device_id != device_id:
+        import logging
+        logger = logging.getLogger("security")
+        logger.error(f"⚠️ DEVICE MISMATCH: token={current_device.device_id}, url={device_id}")
+        raise HTTPException(status_code=403, detail="Unauthorized device")
+    
     status = payload.get("status", "completed")
     error_msg = payload.get("error_message")
     
+    # Usar métodos seguros que validam propriedade
     if status == "completed":
-        ok = await service.repo.complete_command(command_id, error_msg)
+        ok = await service.repo.complete_command_secure(device_id, command_id, error_msg)
     elif status == "failed":
-        ok = await service.repo.fail_command(command_id, error_msg or "Unknown error")
+        ok = await service.repo.fail_command_secure(device_id, command_id, error_msg or "Unknown error")
     else:
         ok = False
     
@@ -235,12 +342,23 @@ async def get_command_status(
     device_id: str,
     command_id: int,
     service: MDMService = Depends(get_service),
-    # Permite tanto device quanto user acessarem (no mínimo um deles deve estar logado)
-    # Aqui, para manter a checagem dupla limpa, vamos focar no uso pelo device:
     current_device: Device = Depends(get_current_device)
 ):
-    """Dispositivo ou admin consulta status de um comando"""
-    status = await service.repo.get_command_status(command_id)
+    """
+    Dispositivo consulta status de um comando.
+    
+    ✅ SEGURO (P1.1): Valida ownership do comando antes de retornar status.
+    Previne device A de consultar status de comando de device B.
+    """
+    # Validar que current_device pertence a este device_id
+    if current_device.device_id != device_id:
+        import logging
+        logger = logging.getLogger("security")
+        logger.error(f"⚠️ DEVICE MISMATCH: token={current_device.device_id}, url={device_id}")
+        raise HTTPException(status_code=403, detail="Unauthorized device")
+    
+    # Usar método seguro que valida propriedade
+    status = await service.repo.get_command_status_secure(device_id, command_id)
     if not status:
         raise HTTPException(status_code=404, detail="Command not found")
     return status

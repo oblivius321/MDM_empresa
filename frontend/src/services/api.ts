@@ -1,8 +1,7 @@
 import axios from 'axios';
 
-// Configure your API base URL here
-// In production, use: import.meta.env.VITE_API_BASE_URL
-const BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || `http://${window.location.hostname}:8000/api`;
+// Define proxy URL rules via VITE or fallback to same-domain proxy logic (/api)
+const BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || '/api';
 
 export const api = axios.create({
   baseURL: BASE_URL,

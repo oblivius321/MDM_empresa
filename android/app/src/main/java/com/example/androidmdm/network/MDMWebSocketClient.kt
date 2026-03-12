@@ -32,8 +32,15 @@ class MDMWebSocketClient(private val context: Context, private val deviceId: Str
         } else {
             baseUrl.replace("http://", "ws://") + "api/ws/device/$deviceId"
         }
+        
+        // Pega o token para conectar na malha segura
+        val prefs = context.getSharedPreferences("ElionMDMPrefs", Context.MODE_PRIVATE)
+        val deviceToken = prefs.getString("DEVICE_TOKEN", "") ?: ""
 
-        val request = Request.Builder().url(wsUrl).build()
+        val request = Request.Builder()
+            .url(wsUrl)
+            .addHeader("x-device-token", deviceToken)
+            .build()
         
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {

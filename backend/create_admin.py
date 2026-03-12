@@ -36,7 +36,10 @@ async def create_first_admin(email: str, password: str):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Povoar o banco com o Admin da Elion")
     parser.add_argument("--email", type=str, default="admin@empresa.com", help="Email do Admin Elite")
-    parser.add_argument("--password", type=str, default="admin123", help="Senha secreta do Admin Elite")
+    parser.add_argument("--password", type=str, required=True, help="⚠️ OBRIGATÓRIO: Senha segura do Admin Elite (mín 12 caracteres recomendado)")
     args = parser.parse_args()
 
+    if len(args.password) < 8:
+        raise ValueError("⚠️ Senha deve ter no mínimo 8 caracteres")
+    
     asyncio.run(create_first_admin(args.email, args.password))

@@ -21,9 +21,13 @@ class MDMService:
         
         device = await self.repo.get(device_id)
         if device:
-            # Device exists, update status and other fields
-            updates = {"is_active": True, "api_key_hash": token_hash, **kwargs}
-            updated_device = await self.repo.update_device(device_id, updates)
+            # ✅ SEGURANÇA (P1.2): Impedir takeover de devices já cadastrados.
+            # Se já existe, admin precisa deletar explicitamente no painel antes de permitir novo enroll.
+            from fastapi import HTTPException, status
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Este dispositivo já está registrado. Para reinseri-lo, remova-o primeiro pelo painel de controle."
+            )
             if updated_device:
                 return updated_device, token
             return device, token # Fallback if update fails

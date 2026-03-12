@@ -1,142 +1,93 @@
-<h1 align="center">
-  <img src="./assets/elion-logo-removebg-preview.png" alt="Elion MDM Enterprise Logo" width="300" />
-</h1>
+# Elion MDM (Mobile Device Management)
 
-<p align="center">
-  <img alt="License" src="https://img.shields.io/badge/license-MIT-brightgreen">
-  <img alt="Python version" src="https://img.shields.io/badge/python-3.10+-blue.svg">
-  <img alt="React version" src="https://img.shields.io/badge/react-18.x-blue.svg">
-  <img alt="Kotlin version" src="https://img.shields.io/badge/kotlin-1.9+-purple.svg">
-</p>
+Sistema robusto de gerenciamento de dispositivos móveis Android Empresariais (Android Enterprise DPC).
+Esta documentação é a **única fonte da verdade** para o projeto, consolidando todas as arquiteturas, guias de setup e políticas de segurança.
 
-# Elion MDM Enterprise - Master Data Management & Device Control
+## 🏗️ Arquitetura do Sistema
 
-Uma solução completa e *Full-Stack* de Gerenciamento de Dispositivos Móveis (MDM), focada em segurança corporativa e controle total de frotas Android.
+O Elion MDM é dividido em 3 camadas principais, orquestradas pelo Docker Compose.
+
+1. **Backend (Python 3.12 + FastAPI)**
+   - API RESTful de alta performance.
+   - Conexão assíncrona com PostgreSQL via SQLAlchemy (`psycopg2` / `asyncpg`).
+   - Autenticação JWT baseada em cookies HTTP-Only e headers para devices.
+   - Rotas segregadas e rate-limiting (SlowAPI).
+
+2. **Frontend (React + TypeScript + Vite)**
+   - Painel administrativo web (Dashboard) para gerenciamento da frota.
+   - Roteamento reativo.
+   - Comunicação reversa via proxy Nginx na porta `:80` (em desenvolvimento mapeado com proxy `/api`).
+   - WebSockets seguros (dashboard) lendo direto da sessão.
+
+3. **Android Client (DPC - Device Policy Controller)**
+   - App Kotlin operando como *Device Owner*.
+   - Retrofit para Heartbeats periódicos (Check-ins).
+   - OkHttp WebSockets (Conexão persistente para comandos em tempo real - Lock / Wipe / Policies).
+   - Envio de telemetria base (Bateria, Sinal, Armazenamento, Localização).
+
+4. **Infraestrutura (Docker + Nginx + PostgreSQL)**
+   - Nginx agindo como API Gateway de borda, repassando rotas para o React estático e para a API do FastAPI sob o `/api/`.
 
 ---
 
-## ⚡ Quick Start
+## 🔒 Postura de Segurança (Hardened Default)
 
-**Novo no projeto?** Comece por aqui:
+Este projeto contém proteções ativas incorporadas ao código fonte para evitar exploits críticos:
 
-1. **[ESSENTIALS.md](./ESSENTIALS.md)** - Guia rápido de referência (2 min)
-2. **[SETUP.md](./SETUP.md)** - Como configurar localmente (5 min)
-3. **[ENV_GUIDE.md](./ENV_GUIDE.md)** - Variáveis de ambiente (3 min)
+- **Strict Environment Variables:** Qualquer *fallback* hardcoded foi proibido. Se você não fornecer as variávies vitais no arquivo `.env`, o sistema irá se recusar a inicializar (`ValueError`).
+- **Device Takeover Prevention:** Dispositivos registrados e ativos não podem ser "sobrepostos" em novos enrolls sem a exclusão manual prévia pelo administrador.
+- **WebSocket Header Auth:** Conexões websocket REST não usam mais Query Strings; os tokens são encapsulados em cabeçalhos (ex: `x-device-token`) pelo OKHttp no Android e validados pelo lado do FastAPI.
+- **FastAPI TrustedHostMiddleware:** O backend se defende isoladamente contra injeções de Host Header. Rate limiters mitigam Brute Force.
+- **Padrão HTTP-Only para Auth web:** Tokens de sessão frontend não residem em LocalStorage; o backend anexa o JWT num cookie travado que viaja automaticamente a cada request na malha do React via Axios intercepters.
+- **Senhas Padrão Bloqueadas:** O script `create_admin.py` não insere mais "admin123"; ele extrai mandatoriamente do `.env` (`DEFAULT_ADMIN_PASSWORD`).
 
-Para começar imediatamente:
+---
+
+## 🚀 Como Iniciar (Setup de Desenvolvimento)
+
+### 1. Preparação das Variáveis de Ambiente
+Na raiz do repositório, existe um arquivo de modelo chamado `.env.example`. Você deve copiá-lo e renomeá-lo:
 ```bash
-cp .env.development .env  # ou customize
-python backend/main.py    # Terminal 1
-npm run dev --prefix frontend  # Terminal 2
+cp .env.example .env
 ```
+Abra o `.env` gerado e preencha as credenciais. **É crucial definir** as tags de segurança:
+- `SECRET_KEY` (Chave mestra do JWT)
+- `BOOTSTRAP_SECRET` (Senha provisória de Enrollment do Android)
+- `DEFAULT_ADMIN_PASSWORD` (Senha ultra forte para seu usuário raiz. Pelo menos 12 caracteres)
 
----
+### 2. Levantando a Infraestrutura Modular
 
-## 📖 Visão Geral do Projeto
-
-O **Elion MDM** soluciona as principais dores de uma operação corporativa: Segurança da Informação, Controle de Utilização Externa e Auditoria (Inventário). 
-
-O sistema é formado por três grandes camadas tecnológicas interconectadas:
-
-1. **Admin Dashboard (Frontend):** Interface web rica e intuitiva para o gestor visualizar a frota, impor regras e despachar comandos de emergência (Wipe/Lock).
-2. **Core Server (Backend):** A API principal responsável pela orquestração do banco de dados, gestão do enfileiramento de comandos e autenticação.
-3. **Elion DPC (Android Device Policy Controller):** O "Agente" embutido nos celulares e tablets da corporação. Ele detém privilégios a nível de Sistema Operacional (Device Admin) para forçar o aparelho a obeceder as regras vindas do Backend.
-
----
-
-## 🏗️ Stack Tecnológico e Componentes
-
-### 1. Frontend Web (Interface do Gestor)
-- **Ecossistema:** React 18 + TypeScript empacotado pelo Vite (garantindo carregamentos quase instantâneos).
-- **Design & UI:** Tailwind CSS puro e simplificado, alinhado com padrões minimalistas de UI (Headless UI components + Radix/Shadcn), visando usabilidade.
-- **Principais Componentes:**
-  - **Dashboard:** Métricas analíticas do sistema.
-  - **Painel de Dispositivos:** Lista visual com status real (Online, Offline, Bloqueado). Detalhes ricos como IMEI, nível de bateria e fabricante.
-  - **Motor de Políticas:** Capacidade de acionar *Camera Disabled*, *Kiosk Mode*, *Factory Reset* restrito, e proibir instalação de apps fora da loja.
-  - **Botões de Resposta Rápida (C2):** Comandos em 1-clique para Lock (Bloqueio remoto), Reboot e **Wipe (Apagar aparelho de fábrica)** em cenários de roubo.
-
-### 2. Backend API (Cérebro do MDM)
-- **Framework:** Python com **FastAPI** (Excelente performance em I/O assíncrono).
-- **Banco de Dados:** Atualmente em **SQLite** com **SQLAlchemy**, operando de forma assíncrona. Padrão modelado para migração 1:1 para PostgreSQL no futuro via Alembic.
-- **Padrão de Arquitetura (Service/Repository):** 
-  - Controllers/Rotas isoladas que filtram requisições REST web.
-  - Serviços contendo as pesadas regras de negócio e validações Pydantic.
-  - Repositórios com as consultas limpas ao Banco de Dados.
-- **Ecossistema Real-Time (WebSockets):** O servidor FastAPI conta com um Connection Manager capaz de manter túneis TCP bi-direcionais persistentes. Isso permite transmissão contínua e sem delay de Eventos entre Dispositivos Android -> Servidor Central -> Painel Web do Administrador.
-- **Padrão de Enfileiramento (Command Queue):** Todo botão "Wipe" ou "Lock" apertado no Front gera uma *Queue* no banco. A arquitetura de fila suporta as oscilações naturais da internet móvel 4G/5G, garantindo o envio ponta a ponta quando o dispositivo estiver ativo.
-
-### 3. Android DPC (Módulo Mobile em Kotlin)
-Desenvolvido via linguagem raiz nativa **Kotlin**. Este App (Agente Invisível) se apodera da `DevicePolicyManager` para operar abaixo do nível dos apps comuns. 
-- **`ElionAdminReceiver`:** Observador nativo. Identifica tentativas de quebra de senha na tela de bloqueio e reporta se o Agente for removido.
-- **`PolicyManager`:** Módulo utilitário capaz de invocar funções cruciais do Android como `setCameraDisabled()`, forçar modo quiosque/App único via `startLockTask()` e triturar dados forçando um *Hard Reset* via `wipeData()`.
-- **`InventoryManager`:** Varredor silencioso que acessa `BatteryManager` e `PackageManager` para levantar a Saúde Física e Digital da máquina (Nível de bateria %, espaço em disco e lista de apps instalados).
-- **`FirebaseMessagingService`:** Canal de Comando e Controle (C2). Um *Listener* push de baixo consumo de bateria que reage aos sinais WebSocket do ecossistema do servidor.
-
----
-
-## 🚀 Como Rodar o Projeto na sua Máquina
-
-### Pré-requisitos Básicos
-- **Python** `3.10+` instalado.
-- **Node.js** `18+` (com npm).
-- (Opcional) **Android Studio** atualizado para compilar o APK nativo.
-
-### Passo 1: Iniciando a API (Backend)
-Abra o seu terminal na raiz do projeto:
+Utilize o Docker Compose para subir todo o aglomerado de uma vez (Postgres, Nginx, Front, Backend):
 
 ```bash
-# Navegue até a pasta do backend
-cd backend
-
-# Crie um ambiente virtual isolado Python
-python -m venv .venv
-
-# Ative o ambiente virtual - Exemplo no Windows (Powershell):
-.\.venv\Scripts\activate
-# Ou no Mac/Linux:
-# source .venv/bin/activate
-
-# Instale os requerimentos do projeto
-pip install -r requirements.txt
-
-# Suba a API FastAPI (Na porta 8000)
-python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+docker-compose up -d --build
 ```
-*(Documentação Swagger da API rodando em: `http://localhost:8000/docs`)*
+> O banco de dados persistirá na pasta oculta `.pgdata/` dentro da raiz.
 
-### Passo 2: Iniciando o Painel do Gestor (Frontend)
-Abra uma **nova** janela/aba no seu Terminal:
+### 3. Criando a Conta Administradora Raiz
+O banco PostgreSQL subirá vazio. Para iniciar seu painel, gere sua primeira conta lendo a secret do `.env`:
 
 ```bash
-# Na base do projeto, navegue para o Frontend
-cd frontend
-
-# Instale os pacotes NPM
-npm install
-
-# Suba o servidor SPA React (Vite)
-npm run dev
+docker-compose exec backend python create_admin.py
 ```
-*(O Sistema Frontend Web rodará em: `http://localhost:5173`)*
-
-### Passo 3: O Dispositivo Android
-1. Abra o **Android Studio** e importe apenas a pasta `android/`.
-2. Aguarde o *Gradle Sync* (já foi otimizado para não congelar o PC com build paralelo e caching de módulos independentes no arquivo `gradle.properties`).
-3. Compile o aplicativo para um emulador.
-4. Conceda privilégios de **Administrador do Dispositivo** manuais na aba e painel de *Segurança* e *Privacidade* das configurações Android do celular, referenciando o `Elion MDM DPC`.
+*(Faça login com `admin@empresa.com` utilizando a senha declarada no `.env`)*
 
 ---
 
-## 🔒 Roadmap e Melhorias Arquiteturais
+## 📱 Gerenciamento do Dispositivo Android (DPC)
 
-A arquitetura atual serve muito bem como MDM Standalone, mas o plano a longo prazo aponta para integrações Cloud State-of-Art:
+### Provisionamento (Enrollment) via QR Code / ADB
+Para colocar o aparelho sob Gestão Corporativa da sua instância Elion, o aparelho Android precisa ser provisionado imediatamente após o Factory Reset (na tela de "Bem-Vindo" do Google), ou via comando ADB caso seja emulador/teste sem conta Google.
 
-- [ ] **Integração Plena Firebase (FCM):** Fechar o ciclo do C2 Push Notification para Android, enviando o Payload exato e imediato gerado pelo Python para acordar o smartphone via rede móvel desligada.
-- [ ] **Migração Oficial Android Enterprise (AMAPI):** Promover o agente DPC baseado em Admin Receivers *Legacy* para o ecosistema em nuvem moderno da "Android Management API" em infraestrutura serverless da Google.
-- [ ] **Geolocalização (Tracking):** Implementação de telemetria GPS e renderização em interface Web baseada em OpenStreetMaps/Leaflet.
-- [ ] **RabbitMQ / Redis:** Adicionar camada de Pub/Sub na nuvem para tirar a sobrecarga de Command Queueing do banco relacional principal.
+```bash
+adb shell dpm set-device-owner com.example.androidmdm/.AdminReceiver
+```
+
+Após ativado, o App solicitará credenciais de Bootstrap (`BOOTSTRAP_SECRET` setada no backend) para obter o primeiro `device_token` seguro intransferível.
 
 ---
-<p align="center">
-  <i>Construído sob fundamentos rígidos de Engenharia de Software Moderna.</i>
-</p>
+
+## 🧹 Manutenção e Clean-Up
+Se o sistema for migrado no futuro, tome cuidado com:
+- O banco Postgres possui volumes persistentes. Remover o container não exclui os usuários. Para resetar a base 100%: `docker-compose down -v`
+- Rotação de chaves: Alterar a `SECRET_KEY` matará todas as sessões webs ativas instantaneamente (os usuários terão de relogar). Alterar `BOOTSTRAP_SECRET` não desconectará celulares já registrados, contudo, todos os novos registros demandarão a senha nova.

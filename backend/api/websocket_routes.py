@@ -12,10 +12,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.websocket("/ws/dashboard")
-async def websocket_dashboard(websocket: WebSocket, token: str = Query(None)):
+async def websocket_dashboard(websocket: WebSocket):
     """
-    Endpoint para painéis React se conectarem para receberem eventos em tempo real
+    Endpoint para painéis React se conectarem para receberem eventos em tempo real.
+    Lê o token JWT seguro direto do Cookie HttpOnly.
     """
+    # Lê o cookie no handshake
+    token = websocket.cookies.get("access_token")
     if not token:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
@@ -41,11 +44,12 @@ async def websocket_dashboard(websocket: WebSocket, token: str = Query(None)):
         logger.info("Conexão com Dashboard perdida")
 
 @router.websocket("/ws/device/{device_id}")
-async def websocket_device(websocket: WebSocket, device_id: str, token: str = Query(None)):
+async def websocket_device(websocket: WebSocket, device_id: str):
     """
     Endpoint exclusivo para cliente Android segurar uma conexão contínua com nosso servidor.
     Dessa forma injetamos Wipe/Lock direto no túnel deles sem gastar cotas do Firebase e na mesma fração de segundo.
     """
+    token = websocket.headers.get("x-device-token")
     if not token:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return

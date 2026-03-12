@@ -161,6 +161,36 @@ class DeviceRepository:
         await self.db.commit()
         return True
 
+    # ============= COMMAND OPERATIONS COM VALIDAÇÃO DE PROPRIEDADE (P1.1) =============
+    async def acknowledge_command_secure(self, device_id: str, command_id: int) -> bool:
+        """
+        ✅ SEGURO: Valida que o comando pertence ao device antes de reconhecer.
+        Previne device A de reconhecer comando de device B.
+        """
+        from backend.models.policy import CommandQueue
+        from datetime import datetime
+        
+        # Buscar comando e validar que pertence a este device
+        result = await self.db.execute(
+            select(CommandQueue).where(
+                CommandQueue.id == command_id,
+                CommandQueue.device_id == device_id
+            )
+        )
+        cmd = result.scalars().first()
+        
+        if not cmd:
+            # Log para detecção de ataque
+            import logging
+            logger = logging.getLogger("security")
+            logger.warning(f"⚠️ COMMAND ISOLATION VIOLATION: device_id={device_id} tentou acessar command_id={command_id}")
+            return False
+        
+        cmd.status = "acked"
+        cmd.acked_at = datetime.utcnow()
+        await self.db.commit()
+        return True
+
     async def complete_command(self, command_id: int, error_msg: Optional[str] = None) -> bool:
         """Marca um comando como completado pelo dispositivo"""
         from backend.models.policy import CommandQueue
@@ -172,6 +202,36 @@ class DeviceRepository:
         cmd = result.scalars().first()
         
         if not cmd:
+            return False
+        
+        cmd.status = "completed" if not error_msg else "failed"
+        cmd.completed_at = datetime.utcnow()
+        cmd.error_message = error_msg
+        await self.db.commit()
+        return True
+
+    # ✅ SEGURO: Valida propriedade de device
+    async def complete_command_secure(self, device_id: str, command_id: int, error_msg: Optional[str] = None) -> bool:
+        """
+        ✅ SEGURO: Valida que o comando pertence ao device antes de marcar como completado.
+        Previne device A de completar comando de device B.
+        """
+        from backend.models.policy import CommandQueue
+        from datetime import datetime
+        
+        result = await self.db.execute(
+            select(CommandQueue).where(
+                CommandQueue.id == command_id,
+                CommandQueue.device_id == device_id
+            )
+        )
+        cmd = result.scalars().first()
+        
+        if not cmd:
+            # Log para detecção de ataque
+            import logging
+            logger = logging.getLogger("security")
+            logger.warning(f"⚠️ COMMAND ISOLATION VIOLATION: device_id={device_id} tentou atualizar status de command_id={command_id}")
             return False
         
         cmd.status = "completed" if not error_msg else "failed"
@@ -207,6 +267,42 @@ class DeviceRepository:
         await self.db.commit()
         return True
 
+    # ✅ SEGURO: Valida propriedade de device
+    async def fail_command_secure(self, device_id: str, command_id: int, error_msg: str) -> bool:
+        """
+        ✅ SEGURO: Valida propriedade de device antes de marcar como falhado.
+        """
+        from backend.models.policy import CommandQueue
+        from datetime import datetime
+        
+        result = await self.db.execute(
+            select(CommandQueue).where(
+                CommandQueue.id == command_id,
+                CommandQueue.device_id == device_id
+            )
+        )
+        cmd = result.scalars().first()
+        
+        if not cmd:
+            # Log para detecção de ataque
+            import logging
+            logger = logging.getLogger("security")
+            logger.warning(f"⚠️ COMMAND ISOLATION VIOLATION: device_id={device_id} tentou falhar command_id={command_id}")
+            return False
+        
+        cmd.retry_count += 1
+        
+        if cmd.retry_count >= cmd.max_retries:
+            cmd.status = "failed"
+            cmd.error_message = f"{error_msg} (max retries exceeded)"
+        else:
+            cmd.status = "pending"
+            cmd.sent_at = None
+        
+        cmd.completed_at = datetime.utcnow()
+        await self.db.commit()
+        return True
+
     async def get_command_status(self, command_id: int) -> Optional[dict]:
         """Retorna o status completo de um comando"""
         from backend.models.policy import CommandQueue
@@ -217,6 +313,43 @@ class DeviceRepository:
         cmd = result.scalars().first()
         
         if not cmd:
+            return None
+        
+        return {
+            "id": cmd.id,
+            "device_id": cmd.device_id,
+            "command": cmd.command,
+            "status": cmd.status,
+            "retry_count": cmd.retry_count,
+            "max_retries": cmd.max_retries,
+            "created_at": cmd.created_at,
+            "sent_at": cmd.sent_at,
+            "acked_at": cmd.acked_at,
+            "completed_at": cmd.completed_at,
+            "error_message": cmd.error_message
+        }
+
+    # ✅ SEGURO: Valida propriedade de device
+    async def get_command_status_secure(self, device_id: str, command_id: int) -> Optional[dict]:
+        """
+        ✅ SEGURO: Retorna status apenas se o comando pertence ao device.
+        Previne device A de ver status de comando de device B.
+        """
+        from backend.models.policy import CommandQueue
+        
+        result = await self.db.execute(
+            select(CommandQueue).where(
+                CommandQueue.id == command_id,
+                CommandQueue.device_id == device_id
+            )
+        )
+        cmd = result.scalars().first()
+        
+        if not cmd:
+            # Log para detecção de ataque
+            import logging
+            logger = logging.getLogger("security")
+            logger.warning(f"⚠️ COMMAND ISOLATION VIOLATION: device_id={device_id} tentou visualizar comando_id={command_id}")
             return None
         
         return {

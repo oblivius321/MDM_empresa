@@ -37,27 +37,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(false);
   }, []);
 
+  const importApi = async () => {
+    // Dynamic import inside actions to avoid circular dependencies if any
+    const { api } = await import('../services/api');
+    return api;
+  };
+
   const login = async (email: string, password: string): Promise<boolean> => {
     try {
-      const response = await fetch(
-        `http://${window.location.hostname}:8000/api/auth/login`,
-        {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password }),
-        }
-      );
+      const api = await importApi();
+      const response = await api.post('/auth/login', { email, password });
 
-      if (!response.ok) {
-        if (response.status === 429) {
-          throw new Error("Muitas tentativas de login. Tente novamente em alguns minutos.");
-        }
-        const error = await response.json();
-        throw new Error(error.detail || 'Falha na autenticação');
-      }
-
-      const data = await response.json();
+      const data = response.data;
 
       const userPayload = {
         email: data.user.email,
@@ -85,29 +76,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     adminPassword: string
   ): Promise<boolean> => {
     try {
-      const response = await fetch(
-        `http://${window.location.hostname}:8000/api/auth/register`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email,
-            password,
-            security_question: securityQuestion,
-            security_answer: securityAnswer,
-            admin_email: adminEmail,
-            admin_password: adminPassword,
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        if (response.status === 429) {
-          throw new Error("Muitas tentativas de cadastro. Tente novamente em alguns minutos.");
-        }
-        const error = await response.json();
-        throw new Error(error.detail || 'Falha no cadastro');
-      }
+      const api = await importApi();
+      await api.post('/auth/register', {
+        email,
+        password,
+        security_question: securityQuestion,
+        security_answer: securityAnswer,
+        admin_email: adminEmail,
+        admin_password: adminPassword,
+      });
 
       return true;
     } catch (error) {
@@ -118,10 +95,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = async () => {
     try {
-      await fetch(`http://${window.location.hostname}:8000/api/auth/logout`, {
-        method: 'POST',
-        credentials: 'include'
-      });
+      const api = await importApi();
+      await api.post('/auth/logout');
     } catch (e) { /* ignore */ }
 
     setUser(null);
