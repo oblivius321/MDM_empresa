@@ -1,34 +1,36 @@
 import pytest
 from httpx import AsyncClient, ASGITransport
-import backend.models.telemetry
-import backend.models.policy
-import backend.models.user
-import backend.models.device
 from backend.main import app
 from sqlalchemy.ext.asyncio import AsyncSession
-from backend.core.database import get_db
 from backend.models.user import User
 from backend.core.security import get_password_hash
 import uuid
 
 # Helper to create a test user
 async def create_test_user():
-    db_gen = get_db()
-    db = await anext(db_gen)
-    test_email = f"test_{uuid.uuid4().hex}@test.com"
-    test_password = "password123"
+    from backend.core.database import engine, Base
     
-    # Injeta um usuário de teste no banco para tentar o login
-    try:
+    # Create tables if not exist
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    
+    # Create test user
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.orm import sessionmaker
+    
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    
+    async with async_session() as session:
+        test_email = f"test_{uuid.uuid4().hex}@test.com"
+        test_password = "password123"
+        
         new_user = User(
             email=test_email,
             hashed_password=get_password_hash(test_password),
             is_admin=True
         )
-        db.add(new_user)
-        await db.commit()
-    finally:
-        await db.close()
+        session.add(new_user)
+        await session.commit()
         
     return test_email, test_password
 

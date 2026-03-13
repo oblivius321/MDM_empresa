@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { TopBar } from '@/components/TopBar';
 import { Settings as SettingsIcon, Server, Key, Bell, Database, Shield, Users, HardDrive, CheckCircle, AlertCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { API_DISPLAY_URL, buildApiUrl } from '@/services/api';
 
 interface SystemHealth {
   api: 'healthy' | 'degraded' | 'down';
@@ -12,7 +13,7 @@ interface SystemHealth {
 
 export default function Settings() {
   const { toast } = useToast();
-  const apiBase = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:8000';
+  const apiBase = API_DISPLAY_URL;
   const [refreshInterval, setRefreshInterval] = useState('30000');
   const [systemHealth, setSystemHealth] = useState<SystemHealth>({
     api: 'healthy',
@@ -35,7 +36,7 @@ export default function Settings() {
     }
 
     try {
-      const response = await fetch(`${apiBase}/api/auth/register`, {
+      const response = await fetch(buildApiUrl('/auth/register'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

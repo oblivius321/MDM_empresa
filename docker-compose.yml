@@ -34,6 +34,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://${DB_USER:-postgres}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-mdm_project}
       SECRET_KEY: ${SECRET_KEY?Missing SECRET_KEY}
       BOOTSTRAP_SECRET: ${BOOTSTRAP_SECRET?Missing BOOTSTRAP_SECRET}
+      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD?Missing DEFAULT_ADMIN_PASSWORD}
       DEBUG: ${DEBUG:-True}
       ENVIRONMENT: ${ENVIRONMENT:-development}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
@@ -77,7 +78,8 @@ services:
     container_name: elion-mdm-nginx
     ports:
       - "80:80"
-      - "443:443"
+      - "8080:80"
+      # - "443:443"  # Comentada para desenvolvimento (usar HTTP)
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ./ssl:/etc/nginx/ssl:ro

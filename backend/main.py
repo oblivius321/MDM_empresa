@@ -52,9 +52,13 @@ if environment == "production":
 else:
     # 🟡 DESENVOLVIMENTO: Origins locais apenas (sem permissão wildcard)
     allowed_origins = [
+        "http://localhost",           # Nginx reverse proxy (porta 80)
+        "http://localhost:8080",      # Nginx porta alternativa
         "http://localhost:5173",      # Vite dev server
         "http://localhost:3000",      # Frontend container
         "http://localhost:8000",      # Backend (para testes)
+        "http://127.0.0.1",          # Nginx via IP (porta 80)
+        "http://127.0.0.1:8080",     # Nginx via IP porta alternativa
         "http://127.0.0.1:5173",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:8000",
@@ -87,6 +91,10 @@ def root():
     return {
         "message": "MDM API - use /api/enroll, /api/devices, /api/devices/{id}/apply_policy, /api/devices/{id}"
     }
+
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
 
 
 if __name__ == "__main__":

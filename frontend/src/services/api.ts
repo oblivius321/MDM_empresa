@@ -1,10 +1,73 @@
 import axios from 'axios';
 
-// Define proxy URL rules via VITE or fallback to same-domain proxy logic (/api)
-const BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || '/api';
+const rawBaseUrl = (import.meta as any).env?.VITE_API_BASE_URL?.trim();
+
+function trimTrailingSlash(value: string) {
+  return value.replace(/\/+$/, '');
+}
+
+function joinPath(basePath: string, path: string) {
+  return `${trimTrailingSlash(basePath)}/${path.replace(/^\/+/, '')}`;
+}
+
+function resolveApiBaseUrl() {
+  if (!rawBaseUrl) {
+    return '/api';
+  }
+
+  if (rawBaseUrl.startsWith('/')) {
+    return trimTrailingSlash(rawBaseUrl);
+  }
+
+  if (typeof window === 'undefined') {
+    return trimTrailingSlash(rawBaseUrl);
+  }
+
+  try {
+    const url = new URL(rawBaseUrl, window.location.origin);
+    const basePort = url.port || (url.protocol === 'https:' ? '443' : '80');
+    const frontendPort = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+    const sameHost = url.hostname === window.location.hostname;
+    const isDefaultHttpPort = basePort === '80' || basePort === '443';
+
+    // In dev, prefer the Vite proxy when the env points to the same host on the default port.
+    if (import.meta.env.DEV && sameHost && isDefaultHttpPort && frontendPort !== basePort) {
+      return '/api';
+    }
+
+    return trimTrailingSlash(url.toString());
+  } catch {
+    return '/api';
+  }
+}
+
+export const API_BASE_URL = resolveApiBaseUrl();
+export const API_DISPLAY_URL =
+  typeof window !== 'undefined' && !API_BASE_URL.startsWith('http')
+    ? `${window.location.origin}${API_BASE_URL}`
+    : API_BASE_URL;
+
+export function buildApiUrl(path: string) {
+  return joinPath(API_BASE_URL, path);
+}
+
+export function buildWebSocketUrl(path: string) {
+  if (typeof window === 'undefined') {
+    return path;
+  }
+
+  if (API_BASE_URL.startsWith('http')) {
+    const url = new URL(API_BASE_URL);
+    const wsProtocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${wsProtocol}//${url.host}${joinPath(url.pathname, path)}`;
+  }
+
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${wsProtocol}//${window.location.host}${joinPath(API_BASE_URL, path)}`;
+}
 
 export const api = axios.create({
-  baseURL: BASE_URL,
+  baseURL: API_BASE_URL,
   timeout: 10000,
   withCredentials: true,
   headers: {

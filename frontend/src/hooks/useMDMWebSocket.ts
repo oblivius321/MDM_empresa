@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext'; // Usa isAuthenticated para controle de ciclo de vida
+import { buildWebSocketUrl } from '../services/api';
 
 export function useMDMWebSocket(onDeviceChange: () => void) {
   const [isConnected, setIsConnected] = useState(false);
@@ -10,10 +11,7 @@ export function useMDMWebSocket(onDeviceChange: () => void) {
     // Só tenta conectar se tiver logado
     if (!isAuthenticated) return;
 
-    // A baseUrl segura vai depender das envs.
-    // O backend agora resolve o Auth via Cookie "access_token" enviado automaticamente.
-    const baseUrl = (import.meta as any).env?.VITE_API_BASE_URL || `http://${window.location.hostname}:8000/api`;
-    const wsUrl = baseUrl.replace('http', 'ws').replace('/api', '') + '/ws/dashboard';
+    const wsUrl = buildWebSocketUrl('/ws/dashboard');
 
     function connect() {
       ws.current = new WebSocket(wsUrl);
