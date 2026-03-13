@@ -326,13 +326,5 @@ Este projeto está licenciado sob a MIT License - veja [LICENSE.md](LICENSE.md) 
 
 ## 👤 Autores
 
-**Desenvolvido por:** Equipe MDM Elion  
+**Desenvolvido por:** matheus felipe
 **Repositório:** https://github.com/oblivius321/MDM_PROJECT_ELION
-
----
-
-## 📞 Suporte
-
-Para relatar bugs ou solicitar features, abra uma [Issue no GitHub](https://github.com/oblivius321/MDM_PROJECT_ELION/issues).
-
-**Status do Projeto:** ✅ Production Ready (com configuração adequada)
