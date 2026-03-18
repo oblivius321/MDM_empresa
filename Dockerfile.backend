@@ -1,21 +1,39 @@
-FROM python:3.11-slim
+###############################################
+# Elion MDM – Backend (FastAPI)
+# Multi-stage: builder → runtime
+###############################################
+FROM python:3.11-slim AS builder
 
-WORKDIR /app
+WORKDIR /build
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    libpq-dev \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
-RUN pip install --no-cache-dir --upgrade -r requirements.txt
+# ── runtime ──────────────────────────────────
+FROM python:3.11-slim
 
-# Copy project files
+# Non-root user for security
+RUN groupadd -r mdm && useradd -r -g mdm -d /app -s /sbin/nologin mdm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libpq5 curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /install /usr/local
+
+WORKDIR /app
 COPY . .
+RUN chown -R mdm:mdm /app
 
-# Expose FastAPI port
+USER mdm
+
 EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
 
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

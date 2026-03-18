@@ -1,330 +1,296 @@
-# 📱 Elion MDM - Sistema de Gerenciamento de Dispositivos Móveis
+# Elion MDM – Mobile Device Management
 
-![Status](https://img.shields.io/badge/status-active-brightgreen) ![Version](https://img.shields.io/badge/version-1.0.0-blue) ![License](https://img.shields.io/badge/license-MIT-green)
-
-Sistema enterprise-grade de **Mobile Device Management (MDM)** para controle centralizado de dispositivos Android corporativos. Oferece enrollment seguro, aplicação de políticas em tempo real, telemetria completa e auditoria detalhada via painel administrativo web.
-
-## 🎯 Características Principais
-
-- ✅ **Painel Web Moderno** - Dashboard React + Vite com UI responsiva
-- ✅ **API RESTful** - Backend FastAPI de alta performance com autenticação JWT
-- ✅ **Banco de Dados PostgreSQL** - Armazenamento persistente containerizado
-- ✅ **Reverse Proxy Nginx** - API Gateway com TLS/SSL suportado
-- ✅ **WebSockets em Tempo Real** - Comunicação bidirecional com dispositivos
-- ✅ **DPC Android** - App Kotlin como Device Owner com sincronização automática
-- ✅ **Segurança Hardened** - Rate limiting, validação JWT, headers de segurança
-- ✅ **Docker Compose Ready** - Deploy completo com um comando
-- ✅ **Migrations SQL** - Versionamento de schema com suporte a password reset
+Sistema de gerenciamento de dispositivos móveis Android com painel web, API REST, WebSockets em tempo real e agente DPC Android.
 
 ---
 
-## 🏗️ Arquitetura
+## Arquitetura
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    INTERNET / USUÁRIO                    │
-└─────────────────────┬───────────────────────────────────┘
-                      │
-        ┌─────────────▼──────────────┐
-        │   Nginx (Reverse Proxy)    │
-        │   :80 / :443 (TLS Ready)   │
-        └──────────┬─────────┬───────┘
-                   │         │
-    ┌──────────────▼─┐    ┌─▼─────────────┐
-    │    Frontend    │    │   Backend API │
-    │  React/Vite   │    │   FastAPI     │
-    │  :3000        │    │   :8000       │
-    └────────────────┘    └───────┬───────┘
-                                  │
-                    ┌─────────────▼──────────┐
-                    │   PostgreSQL Database  │
-                    │   :5432 (privado)      │
-                    └────────────────────────┘
-
-════════════════════════════════════════════════════════════
-
-                   ┌──────────────────┐
-                   │ Android Client   │
-                   │ (DPC)            │
-                   │ Retrofit/OkHttp  │
-                   └──────┬───────────┘
-                          │ HTTPS
-                   ┌──────▼──────────┐
-                   │ Backend API     │ (Check-ins, Commands)
-                   └─────────────────┘
+                  Internet / Usuário
+                        │
+           ┌────────────▼────────────┐
+           │   Nginx (reverse proxy) │  :80 / :443
+           └─────┬──────────┬────────┘
+                 │          │
+    ┌────────────▼──┐  ┌───▼─────────────┐
+    │   Frontend    │  │   Backend API   │
+    │ React + Vite  │  │  FastAPI + WS   │
+    │   :3000       │  │    :8000        │
+    └───────────────┘  └───────┬─────────┘
+                               │
+                  ┌────────────▼──────────┐
+                  │  PostgreSQL 15        │
+                  │  :5432 (interno)      │
+                  └───────────────────────┘
 ```
 
-### 📦 Stack Tecnológico
+| Camada     | Stack                                                   |
+|------------|---------------------------------------------------------|
+| Frontend   | React 18, TypeScript, Vite 5, Tailwind CSS, shadcn/ui   |
+| Backend    | Python 3.11, FastAPI, SQLAlchemy async, asyncpg, JWT    |
+| Database   | PostgreSQL 15-alpine                                    |
+| Proxy      | Nginx (rate limiting, security headers)                 |
+| Mobile     | Kotlin, Android Enterprise DPC                          |
 
-| Camada | Tecnologia | Versão | Docker |
-|--------|-----------|--------|--------|
-| **Frontend** | React + TypeScript + Vite | 18.2 / 5.4 | Node.js 18 |
-| **Backend** | Python + FastAPI + SQLAlchemy | 3.12 / 0.104 | Python 3.12 |
-| **Database** | PostgreSQL | 15 | postgres:15-alpine |
-| **Proxy** | Nginx | Latest | nginx:alpine |
-| **Mobile** | Kotlin + Android Enterprise | API 30+ | Gradle 8.x |
+### Rotas do Nginx
+
+| Caminho     | Destino                  |
+|-------------|--------------------------|
+| `/`         | Frontend (React)         |
+| `/api/*`    | Backend (FastAPI)        |
+| `/ws`       | Backend WebSocket        |
+| `/api/ws/*` | Backend WebSocket        |
+| `/health`   | Health check Nginx       |
 
 ---
 
-## 🚀 Quick Start (5 minutos)
+## Quick Start (Desenvolvimento Local)
 
 ### Pré-requisitos
-- Docker & Docker Compose instalados
+
+- Docker Desktop (Windows/Mac) ou Docker Engine (Linux)
 - Git
-- Navegador web moderno
 
-### 1️⃣ Clonar o Repositório
-```bash
-git clone https://github.com/oblivius321/MDM_PROJECT_ELION.git
-cd MDM_PROJECT_ELION
-```
+### 1. Clonar e configurar
 
-### 2️⃣ Configurar Variáveis de Ambiente
 ```bash
-# Copiar arquivo de exemplo
+git clone <repo-url>
+cd MDM_PROJETO
+
+# Criar arquivo de configuração
 cp .env.example .env
-
-# Editar .env com suas credenciais
-# Variáveis obrigatórias:
-# - DB_USER=postgres
-# - DB_PASSWORD=SenhaForte123!
-# - SECRET_KEY=sua-chave-secreta-aqui
-# - BOOTSTRAP_SECRET=senha-bootstrap-android
-# - DEFAULT_ADMIN_PASSWORD=SenhaAdminForte123!
+# Editar .env com suas senhas
 ```
 
-### 3️⃣ Iniciar os Containers (Windows PowerShell)
+### 2. Subir o sistema
+
 ```powershell
-# Inicie com build automático
-.\start_docker.ps1 -Build
+# Windows PowerShell
+.\start_docker.ps1
 
-# Ou manualmente via Docker Compose
-docker-compose up -d --build
+# Ou diretamente via Docker Compose
+docker compose up -d
 ```
 
-### 4️⃣ Criar Usuário Administrador
+### 3. Criar usuário administrador
+
 ```bash
-docker-compose exec backend python create_admin.py
+docker compose exec backend python -m backend.create_admin \
+  --email admin@mdm.com \
+  --password SuaSenhaForte123!
 ```
 
-### 5️⃣ Acessar a Aplicação
-```
-🌐 Painel Web: http://localhost
-   Email: admin@empresa.com
-   Senha: (conforme DEFAULT_ADMIN_PASSWORD no .env)
+### 4. Acessar
 
-🔧 API Backend: http://localhost/api
-🗄️ PostgreSQL: localhost:5432
-```
+| Serviço             | URL                              |
+|---------------------|----------------------------------|
+| Frontend (Vite)     | http://localhost:3000             |
+| Frontend (Nginx)    | http://localhost                  |
+| API                 | http://localhost/api              |
+| Swagger Docs        | http://localhost/api/docs         |
+| PostgreSQL          | `localhost:5432`                  |
 
 ---
 
-## 📋 Comandos Úteis do Docker
+## Comandos Docker
 
-### Inicializar / Parar
+### Operações Básicas
+
 ```bash
-# Subir com rebuild
-docker-compose up -d --build
+# Subir containers
+docker compose up -d
 
 # Parar containers
-docker-compose down
+docker compose down
 
-# Parar + remover volumes (limpar dados)
-docker-compose down -v
+# Parar + remover volumes (reset banco)
+docker compose down -v
+
+# Rebuild imagens
+docker compose up -d --build
+
+# Ver logs em tempo real
+docker compose logs -f
+
+# Logs de um serviço específico
+docker compose logs -f backend
 ```
 
-### Logs e Debugging
-```bash
-# Ver logs de todos os containers
-docker-compose logs -f
+### PowerShell Helper (Windows)
 
-# Ver logs específicos do backend
-docker-compose logs -f backend
-
-# Ver status dos containers
-docker-compose ps
+```powershell
+.\start_docker.ps1              # Subir dev
+.\start_docker.ps1 -Build       # Rebuild
+.\start_docker.ps1 -Down        # Parar
+.\start_docker.ps1 -Logs        # Logs
+.\start_docker.ps1 -Clean       # Limpar tudo
+.\start_docker.ps1 -CreateAdmin # Criar admin
+.\start_docker.ps1 -Prod        # Modo produção
 ```
 
-### Executar Comandos no Container
+### Acessar containers
+
 ```bash
-# Criar usuário admin
-docker-compose exec backend python create_admin.py
+# Shell do backend
+docker compose exec backend bash
 
-# Acessar shell do backend
-docker-compose exec backend bash
+# psql do banco
+docker compose exec postgres psql -U postgres -d mdm_project
 
-# Acessar psql do banco
-docker-compose exec postgres psql -U postgres -d mdm_project
+# Shell do frontend
+docker compose exec frontend sh
 ```
 
 ---
 
-## 🔐 Segurança
+## Configuração (.env)
 
-### ✅ Proteções Implementadas
+### Variáveis Obrigatórias
 
-1. **Variáveis Obrigatórias** - Não há fallbacks hardcoded; sistema falha se variáveis críticas faltarem
-2. **Autenticação JWT** - Tokens com expiração, usando cookies HTTP-Only no frontend
-3. **Rate Limiting** - SlowAPI protege endpoints contra brute force (10 req/s API, 5 req/min auth)
-4. **CORS Configurado** - Origins explícitas, sem wildcard em produção
-5. **TLS/SSL Pronto** - Certificados self-signed em `/ssl/`, prontos para Let's Encrypt
-6. **Headers de Segurança** - HSTS, X-Frame-Options, X-Content-Type-Options
-7. **Validação de Input** - Schemas Pydantic com validação rigorosa
-8. **Device Token Persistente** - Tokens intransferíveis entre dispositivos
+| Variável               | Descrição                                 |
+|------------------------|-------------------------------------------|
+| `DB_PASSWORD`          | Senha do PostgreSQL                       |
+| `SECRET_KEY`           | Chave para JWT (gerar com secrets module) |
+| `BOOTSTRAP_SECRET`     | Chave para enrollment de dispositivos     |
+| `DEFAULT_ADMIN_PASSWORD` | Senha do primeiro admin                 |
 
-### 🔑 Gerenciamento de Secrets
+### Gerar chaves seguras
+
+```python
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+---
+
+## Deploy em VPS (Linux)
+
+### 1. Preparar o servidor
 
 ```bash
-# Rotação de chaves secretas quebra todas as sessões ativas
-SECRET_KEY = "chave-de-produção-forte-aqui"
+# Ubuntu/Debian
+sudo apt update && sudo apt install -y docker.io docker-compose-plugin git
+sudo systemctl enable --now docker
+sudo usermod -aG docker $USER
+# Logout e login novamente
+```
 
-# Muda credential de bootstrap para novos enrolls (dispositivos antigos continuam)
-BOOTSTRAP_SECRET = "senha-provisória-enrollment"
+### 2. Clonar e configurar
+
+```bash
+git clone <repo-url> /opt/elion-mdm
+cd /opt/elion-mdm
+
+cp .env.production.example .env
+# Editar .env com senhas de produção fortes
+nano .env
+```
+
+### 3. Certificados TLS (Let's Encrypt)
+
+```bash
+# Instalar certbot
+sudo apt install certbot
+
+# Gerar certificados
+sudo certbot certonly --standalone -d seu-dominio.com
+
+# Copiar para o projeto
+sudo cp /etc/letsencrypt/live/seu-dominio.com/fullchain.pem ./ssl/
+sudo cp /etc/letsencrypt/live/seu-dominio.com/privkey.pem ./ssl/
+
+# Habilitar HTTPS no nginx.conf (descomentar bloco server 443)
+```
+
+### 4. Build e deploy de produção
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+### 5. Criar admin no servidor
+
+```bash
+docker compose exec backend python -m backend.create_admin \
+  --email admin@sua-empresa.com \
+  --password SenhaProducaoForte123!
+```
+
+### 6. Firewall
+
+```bash
+sudo ufw allow 22/tcp    # SSH
+sudo ufw allow 80/tcp    # HTTP
+sudo ufw allow 443/tcp   # HTTPS
+sudo ufw enable
+```
+
+### 7. Auto-renovação de certificados
+
+```bash
+echo "0 3 * * * certbot renew --quiet && docker compose restart nginx" | sudo crontab -
 ```
 
 ---
 
-## 📱 Cliente Android (DPC)
-
-### Provisionamento Inicial
-
-1. **Factory Reset** o dispositivo
-2. **Pulsar QR Code** (gerado no painel Elion) ou usar ADB:
-   ```bash
-   adb shell dpm set-device-owner com.example.androidmdm/.AdminReceiver
-   ```
-3. **Inserir Bootstrap Secret** para obter device_token
-4. **Aplicação de Políticas** acontece automaticamente
-
-### Funcionalidades Suportadas
-- Check-ins periódicos (telemetria)
-- Lock/Unlock remoto
-- Limpeza (Wipe) de dispositivo
-- Instalação de apps (APK)
-- Restrições de funcionalidade (camera, USB, etc)
-- Monitoramento de compliance
-
----
-
-## 🗂️ Estrutura do Projeto
+## Estrutura do Projeto
 
 ```
-MDM_PROJECT_ELION/
-├── backend/                    # API FastAPI
-│   ├── api/
-│   │   ├── auth.py            # Endpoints de autenticação
-│   │   ├── routes.py          # Rotas da API
-│   │   ├── websocket_routes.py # WebSockets tempo real
-│   │   └── device_auth.py     # Auth de dispositivos
-│   ├── core/
-│   │   ├── database.py        # Conexão PostgreSQL async
-│   │   ├── security.py        # JWT, hashing
-│   │   ├── config.py          # Variáveis globais
-│   │   └── limiter.py         # Rate limiting
-│   ├── models/                # Modelos SQLAlchemy
-│   ├── repositories/          # Data Access Layer
-│   ├── schemas/               # Validação Pydantic
-│   ├── services/              # Business logic
-│   ├── main.py                # App entry point
-│   └── create_admin.py        # Script para criar admin
-│
-├── frontend/                  # React + Vite
+MDM_PROJETO/
+├── backend/                 # API FastAPI
+│   ├── api/                 # Rotas, auth, websockets
+│   ├── core/                # Config, database, security
+│   ├── models/              # SQLAlchemy models
+│   ├── repositories/        # Data access layer
+│   ├── schemas/             # Pydantic validation
+│   ├── services/            # Business logic
+│   ├── main.py              # App entry point
+│   └── create_admin.py      # Script criar admin
+├── frontend/                # React + Vite
 │   ├── src/
-│   │   ├── components/        # Componentes React
-│   │   ├── pages/            # Páginas (Dashboard, Devices, etc)
-│   │   ├── contexts/         # Auth context global
-│   │   ├── services/         # API client (axios)
-│   │   ├── hooks/            # Custom React hooks
-│   │   └── App.tsx           # Root component
-│   ├── vite.config.ts        # Config Vite
-│   └── Dockerfile            # Build Node
-│
-├── android/                  # App DPC Kotlin
-│   ├── app/src/main/java/
-│   │   └── com/example/androidmdm/
-│   │       ├── MDMService.kt       # Device Owner logic
-│   │       ├── AdminReceiver.kt    # Device Admin receiver
-│   │       └── network/            # Retrofit + OkHttp
-│   └── build.gradle.kts
-│
-├── migrations/               # SQL scripts versionados
-│   ├── 001_initial.sql
-│   └── 002_add_password_reset_fields.sql
-│
-├── docker-compose.yml        # Orquestração de containers
-├── Dockerfile.backend        # Build do backend
-├── nginx.conf               # Configuração reverse proxy
-├── .env.example             # Template de variáveis
-└── start_docker.ps1         # Script de inicialização (Windows)
+│   │   ├── components/      # UI components
+│   │   ├── pages/           # Dashboard, Devices, etc.
+│   │   ├── contexts/        # Auth context
+│   │   ├── services/        # API client (axios)
+│   │   └── hooks/           # Custom hooks
+│   ├── Dockerfile           # Multi-stage (dev + prod)
+│   └── vite.config.ts       # Proxy /api → backend
+├── android/                 # DPC Agent (Kotlin)
+├── migrations/              # SQL scripts
+├── ssl/                     # Certificados TLS
+├── docker-compose.yml       # Desenvolvimento
+├── docker-compose.prod.yml  # Overrides produção
+├── Dockerfile.backend       # Multi-stage backend
+├── nginx.conf               # Reverse proxy config
+├── .env.example             # Template dev
+├── .env.production.example  # Template produção
+├── start_docker.ps1         # Helper PowerShell
+└── requirements.txt         # Python deps
 ```
 
 ---
 
-## 🧪 Testes
+## Segurança
 
-```bash
-# Rodar testes do backend
-docker-compose exec backend pytest
-
-# Rodar testes do frontend
-cd frontend && npm test
-
-# Cobertura de testes
-docker-compose exec backend pytest --cov=backend
-```
-
----
-
-## 🐛 Troubleshooting
-
-### "Connection refused" ao acessar http://localhost
-- Verifique se containers estão rodando: `docker-compose ps`
-- Aguarde o healthcheck do PostgreSQL: `docker-compose logs postgres | grep ready`
-- Reinicie: `docker-compose restart`
-
-### Backend com erro 404 em /auth/login
-- Verifique: `docker-compose logs backend | grep -i error`
-- Certifique-se que DATABASE_URL está correto no .env
-- Tente: `docker-compose restart backend`
-
-### Frontend não carrega assets do Vite
-- Limpe cache do Docker: `docker-compose down -v`
-- Rebuild: `docker-compose up -d --build`
-- Cache do navegador: Ctrl+Shift+Delete (hard refresh)
-
-### PostgreSQL não inicia
-- Resetar volume: `docker-compose down -v && docker-compose up -d`
-- Verificar espaço em disco: `df -h`
+- Backend não exposto ao host – apenas Nginx acessa internamente
+- Rate limiting no Nginx (API: 10r/s, Auth: 5r/min)
+- Security headers (X-Frame-Options, X-Content-Type-Options, etc.)
+- JWT com expiração + cookies HTTP-Only
+- CORS com origins explícitas (sem wildcard)
+- PostgreSQL isolado na rede Docker
+- Variáveis obrigatórias – falha se faltarem
+- Container backend roda como usuário não-root
+- Healthchecks em todos os serviços
 
 ---
 
-## 📚 Documentação Adicional
+## Troubleshooting
 
-- [Guia de Deploy em Produção](./DEPLOYMENT.md) *(em breve)*
-- [API Openapi/Swagger](http://localhost/api/docs)
-- [Guia de Troubleshooting Android](./android/TROUBLESHOOTING.md)
-
----
-
-## 🤝 Contribuindo
-
-Para contribuir com melhorias:
-
-1. Fork o repositório
-2. Crie uma branch para sua feature (`git checkout -b feature/AmazingFeature`)
-3. Commit suas mudanças (`git commit -m 'Add AmazingFeature'`)
-4. Push para a branch (`git push origin feature/AmazingFeature`)
-5. Abra um Pull Request
-
----
-
-## 📄 Licença
-
-Este projeto está licenciado sob a MIT License - veja [LICENSE.md](LICENSE.md) para detalhes.
-
----
-
-## 👤 Autores
-
-**Desenvolvido por:** matheus felipe
-**Repositório:** https://github.com/oblivius321/MDM_PROJECT_ELION
+| Problema | Solução |
+|----------|---------|
+| "Connection refused" localhost | `docker compose ps` – verificar se estão UP |
+| "ERR_NAME_NOT_RESOLVED" no browser | Usar `localhost:3000`, não IP interno Docker |
+| Backend 500 no login | `docker compose logs backend` – verificar DATABASE_URL |
+| PostgreSQL não inicia | `docker compose down -v && docker compose up -d` |
+| Frontend não atualiza | `docker compose restart frontend` ou limpar cache |
+| Porta 80 ocupada | Alterar para 8080 no docker-compose.yml |

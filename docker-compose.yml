@@ -1,66 +1,69 @@
+###############################################
+# Elion MDM – Docker Compose
+# Dev:  docker compose up -d
+# Prod: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+###############################################
+
 services:
-  # ===== PostgreSQL Database =====
+  # ═══════ PostgreSQL 15 ═══════════════════
   postgres:
     image: postgres:15-alpine
     container_name: elion-mdm-postgres
+    restart: unless-stopped
     environment:
-      # Lidos do .env raiz
-      POSTGRES_USER: ${DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD?A senha do banco precisa ser configurada no .env}
-      POSTGRES_DB: ${DB_NAME:-mdm_project}
+      POSTGRES_USER:     ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Defina DB_PASSWORD no .env}
+      POSTGRES_DB:       ${DB_NAME:-mdm_project}
     ports:
-      # Porta 5432 mapeada para o Host (Permite seu pgAdmin local acessar via localhost:5432)
-      - "5432:5432"
+      - "${DB_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - elion-network
-    # IMPORTANTE: Healthcheck garante que o banco ligou antes do backend subir
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-mdm_project}" ]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-mdm_project}"]
       interval: 5s
       timeout: 5s
       retries: 5
 
-  # ===== Backend FastAPI Server =====
+  # ═══════ Backend FastAPI ═════════════════
   backend:
     build:
       context: .
       dockerfile: Dockerfile.backend
     container_name: elion-mdm-backend
+    restart: unless-stopped
     environment:
-      # IMPORTANTE: Dentro da rede Docker, o backend enxerga o banco pelo nome do servico 'postgres'
-      # NOTA: Usar DATABASE_URL_DOCKER que sobrepõe a DATABASE_URL para forçar conexão "postgres:5432"
-      DATABASE_URL: postgresql+asyncpg://${DB_USER:-postgres}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-mdm_project}
-      SECRET_KEY: ${SECRET_KEY?Missing SECRET_KEY}
-      BOOTSTRAP_SECRET: ${BOOTSTRAP_SECRET?Missing BOOTSTRAP_SECRET}
-      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD?Missing DEFAULT_ADMIN_PASSWORD}
-      DEBUG: ${DEBUG:-True}
-      ENVIRONMENT: ${ENVIRONMENT:-development}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
-    # ⚠️ CRÍTICO (P1.2): Backend NÃO exposto em 8000 para o host
-    # Apenas Nginx (reverse proxy) comunica com backend internamente
+      DATABASE_URL:           postgresql+asyncpg://${DB_USER:-postgres}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-mdm_project}
+      SECRET_KEY:             ${SECRET_KEY:?Defina SECRET_KEY no .env}
+      BOOTSTRAP_SECRET:       ${BOOTSTRAP_SECRET:?Defina BOOTSTRAP_SECRET no .env}
+      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:?Defina DEFAULT_ADMIN_PASSWORD no .env}
+      DEBUG:                  ${DEBUG:-True}
+      ENVIRONMENT:            ${ENVIRONMENT:-development}
+      ALLOWED_ORIGINS:        ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost,http://localhost:5173}
+    # Backend NÃO exposto ao host – Nginx faz proxy reverso
+    # Em dev, descomente a linha abaixo para acesso direto:
     # ports:
-    #   - "8000:8000"  ← REMOVIDO POR SEGURANÇA
+    #   - "8000:8000"
     depends_on:
       postgres:
-        condition: service_healthy # Só sobe quando o Postgres diz que está pronto
+        condition: service_healthy
     volumes:
       - ./backend:/app/backend:ro
     networks:
       - elion-network
-    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload --timeout-keep-alive 30 --timeout-notify 60 --limit-concurrency 100
 
-  # ===== Frontend Vite + Node =====
+  # ═══════ Frontend React/Vite ═════════════
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      target: development
     container_name: elion-mdm-frontend
+    restart: unless-stopped
     environment:
-      # VITE_API_BASE_URL: URL usada DENTRO do container para chamar o backend
-      # Dentro do Docker, usar nome do serviço (nginx) em vez de localhost
-      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://nginx/api}
+      NODE_ENV: development
     ports:
       - "3000:3000"
     depends_on:
@@ -72,14 +75,15 @@ services:
       - elion-network
     command: npm run dev -- --host 0.0.0.0 --port 3000
 
-  # ===== Nginx Reverse Proxy (Opcional - útil na Fase de Produção) =====
+  # ═══════ Nginx Reverse Proxy ═════════════
   nginx:
     image: nginx:alpine
     container_name: elion-mdm-nginx
+    restart: unless-stopped
     ports:
       - "80:80"
       - "8080:80"
-      # - "443:443"  # Comentada para desenvolvimento (usar HTTP)
+      # - "443:443"   # Habilitar quando TLS estiver pronto
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ./ssl:/etc/nginx/ssl:ro
@@ -88,12 +92,16 @@ services:
       - frontend
     networks:
       - elion-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 networks:
   elion-network:
     driver: bridge
 
 volumes:
-  # Volume para reter os dados do banco mesmo que os containers sejam destruídos
   postgres_data:
     driver: local

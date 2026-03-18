@@ -1,0 +1,33 @@
+###############################################
+# Elion MDM – Production Overrides
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+###############################################
+
+services:
+  backend:
+    # Sem --reload, sem volume mount
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --workers 4
+    volumes: []
+    restart: unless-stopped
+
+  frontend:
+    # Build de produção (Nginx serve /dist)
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: production
+    command: []
+    volumes: []
+    restart: unless-stopped
+
+  postgres:
+    # Não expõe a porta 5432 ao host em produção
+    ports: []
+
+  nginx:
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro

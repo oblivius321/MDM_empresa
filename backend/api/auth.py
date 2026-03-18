@@ -67,12 +67,28 @@ router = APIRouter(prefix="/auth", tags=["Autenticação"])
 async def login(request: Request, response: Response, credentials: UserLogin, db: AsyncSession = Depends(get_db)):
     """Login endpoint com tratamento seguro de exceções."""
     try:
+        print(f"🔐 Login attempt received")
+        print(f"  Content-Type: {request.headers.get('content-type')}")
+        print(f"  Credentials parsed: email={credentials.email}, password_length={len(credentials.password)}")
+        
         # Buscar usuário no banco
         repo = UserRepository(db)
         user = await repo.get_by_email(credentials.email)
         
-        # Verificar se usuário existe E senha está correta
-        if not user or not verify_password(credentials.password, user.hashed_password):
+        if not user:
+            print(f"❌ Usuário não encontrado: {credentials.email}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Email corporativo ou senha inválidos",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        # Verificar se senha está correta
+        password_match = verify_password(credentials.password, user.hashed_password)
+        print(f"🔑 Senha verificada para {credentials.email}: {password_match}")
+        
+        if not password_match:
+            print(f"❌ Senha incorreta para: {credentials.email}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Email corporativo ou senha inválidos",

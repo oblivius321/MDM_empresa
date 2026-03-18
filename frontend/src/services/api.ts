@@ -68,7 +68,7 @@ export function buildWebSocketUrl(path: string) {
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 10000,
+  timeout: 30000,  // Aumentado de 10s para 30s
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json',

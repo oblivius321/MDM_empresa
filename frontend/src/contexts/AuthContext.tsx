@@ -45,8 +45,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (email: string, password: string): Promise<boolean> => {
     try {
+      console.log(`🔐 [AuthContext] Login attempt: ${email}`);
       const api = await importApi();
+      
+      console.log(`🔐 [AuthContext] api.baseURL = ${api.defaults.baseURL}`);
+      console.log(`🔐 [AuthContext] api.defaults = `, api.defaults);
+      
       const response = await api.post('/auth/login', { email, password });
+
+      console.log(`✅ [AuthContext] Login successful!`);
+      console.log(`✅ [AuthContext] Response status: ${response.status}`);
+      console.log(`✅ [AuthContext] Response data:`, response.data);
 
       const data = response.data;
 
@@ -61,8 +70,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.setItem('auth_user', JSON.stringify(userPayload));
 
       return true;
-    } catch (error) {
-      console.error('Erro no login:', error);
+    } catch (error: any) {
+      console.error('❌ [AuthContext] Login error:', error);
+      if (error.response) {
+        console.error(`❌ [AuthContext] Status: ${error.response.status}`);
+        console.error(`❌ [AuthContext] Response:`, error.response.data);
+      } else if (error.request) {
+        console.error('❌ [AuthContext] No response received:', error.request);
+      } else {
+        console.error('❌ [AuthContext] Error message:', error.message);
+      }
       return false;
     }
   };

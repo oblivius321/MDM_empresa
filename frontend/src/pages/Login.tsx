@@ -46,6 +46,11 @@ export default function Login() {
             return;
         }
 
+        // Evitar múltiplas submissões
+        if (loading) {
+            return;
+        }
+
         setLoading(true);
 
         try {
@@ -56,6 +61,9 @@ export default function Login() {
                     title: 'Autenticação bem-sucedida',
                     description: 'Bem-vindo ao console do Elion MDM.',
                 });
+                // Limpar campos
+                setEmail('');
+                setPassword('');
                 navigate('/');
             } else {
                 toast({
