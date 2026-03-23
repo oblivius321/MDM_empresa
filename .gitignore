@@ -42,6 +42,9 @@ Thumbs.db
 
 # Android & Gradle
 android/.gradle
+android/gradle/caches/
+android/gradle/daemon/
+android/gradle/wrapper/dists/
 android/build/
 android/app/build/
 android/.cxx/

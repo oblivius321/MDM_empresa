@@ -1,5 +1,7 @@
 from pydantic import BaseModel, EmailStr, ConfigDict, Field
-from typing import Optional
+from typing import Optional, List
+from datetime import datetime
+from enum import Enum
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -14,12 +16,35 @@ class UserCreate(BaseModel):
     admin_password: str
 
 class UserResponse(BaseModel):
+    """Resposta básica de usuário (sem roles)"""
     id: int
     email: EmailStr
     is_admin: bool
     is_active: bool
+    created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class RoleSimplified(BaseModel):
+    """Role simplificada para responses de usuário"""
+    id: int
+    name: str
+    role_type: str  # Enum string
+
+
+class UserResponseWithRoles(UserResponse):
+    """Resposta de usuário com seus roles e permissões"""
+    roles: List[RoleSimplified] = []
+    permissions: List[str] = []  # Lista de nomes de permissões
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserUpdateRequest(BaseModel):
+    """Schema para atualizar um usuário (admin only)"""
+    email: Optional[EmailStr] = None
+    is_active: Optional[bool] = None
 
 class Token(BaseModel):
     access_token: str

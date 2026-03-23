@@ -52,7 +52,7 @@ services:
       - ./backend:/app/backend:ro
     networks:
       - elion-network
-    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload --timeout-keep-alive 30 --timeout-notify 60 --limit-concurrency 100
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload --timeout-keep-alive 30 --limit-concurrency 100
 
   # ═══════ Frontend React/Vite ═════════════
   frontend:

@@ -30,10 +30,9 @@ class MDMService:
             )
             if updated_device:
                 return updated_device, token
-            return device, token # Fallback if update fails
+            return device, token # Fallback
         
-        # New device
-        # Pass kwargs to constructor
+        # NOVO DEVICE
         new_device = Device(device_id=device_id, name=name, device_type=device_type, is_active=True, status="online", api_key_hash=token_hash, **kwargs)
         added = await self.repo.add(new_device)
         return added, token
@@ -45,7 +44,7 @@ class MDMService:
         return await self.repo.remove(device_id)
 
     async def apply_policy(self, device_id: str, policy_data: Dict) -> bool:
-        # Create policy
+        # Criando poliTICA
         policy = await self.repo.add_policy(device_id, policy_data)
         if policy:
              # Queue a command so device pulls the new policy

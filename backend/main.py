@@ -11,11 +11,31 @@ import backend.models.user
 import backend.models.device
 import backend.models.policy
 import backend.models.telemetry
+# ✅ NOVO: Importar modelos RBAC
+import backend.models.role
+import backend.models.permission
+import backend.models.audit_log
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    
+    # ✅ NOVO: Inicializar RBAC na startup
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from backend.services.rbac_service import RBACService
+    
+    async with engine.begin() as conn:
+        async_session = AsyncSession(engine)
+        try:
+            rbac_service = RBACService(async_session)
+            await rbac_service.initialize_rbac()
+            print("✅ RBAC system initialized")
+        except Exception as e:
+            print(f"⚠️  RBAC initialization: {e}")
+        finally:
+            await async_session.close()
+    
     yield
 
 app = FastAPI(title="MDM Projeto", lifespan=lifespan)
@@ -81,10 +101,14 @@ app.add_middleware(
 )
 
 from backend.api import websocket_routes
+# ✅ NOVO: Importar rotas RBAC
+from backend.api import rbac_routes
 
 app.include_router(routes.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
 app.include_router(websocket_routes.router, prefix="/api")
+# ✅ NOVO: Registrar rotas RBAC
+app.include_router(rbac_routes.router, prefix="/api")
 
 @app.get("/")
 def root():

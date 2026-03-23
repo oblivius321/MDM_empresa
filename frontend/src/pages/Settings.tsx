@@ -3,6 +3,7 @@ import { TopBar } from '@/components/TopBar';
 import { Settings as SettingsIcon, Server, Key, Bell, Database, Shield, Users, HardDrive, CheckCircle, AlertCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { API_DISPLAY_URL, buildApiUrl } from '@/services/api';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface SystemHealth {
   api: 'healthy' | 'degraded' | 'down';
@@ -13,6 +14,7 @@ interface SystemHealth {
 
 export default function Settings() {
   const { toast } = useToast();
+  const { user } = useAuth();
   const apiBase = API_DISPLAY_URL;
   const [refreshInterval, setRefreshInterval] = useState('30000');
   const [systemHealth, setSystemHealth] = useState<SystemHealth>({
@@ -224,8 +226,8 @@ export default function Settings() {
           <div className="space-y-2 text-sm">
             <div className="flex items-center justify-between p-3 rounded-md bg-muted/50 border border-border">
               <div>
-                <p className="font-medium text-foreground">admin@company.com</p>
-                <p className="text-xs text-muted-foreground">Criado em 01/03/2026</p>
+                <p className="font-medium text-foreground">{user?.email || 'Administrador'}</p>
+                <p className="text-xs text-muted-foreground">Logado atualmente</p>
               </div>
               <span className="text-xs px-2 py-1 rounded-full bg-green-100 text-green-800">Ativo</span>
             </div>

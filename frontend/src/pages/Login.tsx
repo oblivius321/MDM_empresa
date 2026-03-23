@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Shield, ArrowRight, UserPlus, ArrowLeft } from 'lucide-react';
+import { Shield, ArrowRight, UserPlus, ArrowLeft, Eye, EyeOff } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import ForgotPassword from '@/components/ForgotPassword';
@@ -20,12 +20,15 @@ export default function Login() {
     // Form states - Login
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
 
     // Form states - Register
     const [securityQuestion, setSecurityQuestion] = useState('');
     const [securityAnswer, setSecurityAnswer] = useState('');
     const [adminEmail, setAdminEmail] = useState('');
     const [adminPassword, setAdminPassword] = useState('');
+    const [showNewPassword, setShowNewPassword] = useState(false);
+    const [showAdminPassword, setShowAdminPassword] = useState(false);
 
     // Redirecionar se já autenticado
     useEffect(() => {
@@ -191,15 +194,24 @@ export default function Login() {
                                                 Esqueceu a senha?
                                             </button>
                                         </div>
-                                        <Input
-                                            id="password"
-                                            type="password"
-                                            placeholder="••••••••"
-                                            className="bg-background/50"
-                                            value={password}
-                                            onChange={(e) => setPassword(e.target.value)}
-                                            required
-                                        />
+                                        <div className="relative">
+                                            <Input
+                                                id="password"
+                                                type={showPassword ? "text" : "password"}
+                                                placeholder="••••••••"
+                                                className="bg-background/50 pr-10"
+                                                value={password}
+                                                onChange={(e) => setPassword(e.target.value)}
+                                                required
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowPassword(!showPassword)}
+                                                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground focus:outline-none"
+                                            >
+                                                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                            </button>
+                                        </div>
                                     </div>
 
                                     <Button type="submit" className="w-full font-medium mt-6" disabled={loading}>
@@ -229,15 +241,24 @@ export default function Login() {
                                         </div>
                                         <div className="space-y-2">
                                             <Label htmlFor="new-password">Senha de Acesso</Label>
-                                            <Input
-                                                id="new-password"
-                                                type="password"
-                                                placeholder="••••••••"
-                                                className="bg-background/50"
-                                                value={password}
-                                                onChange={(e) => setPassword(e.target.value)}
-                                                required
-                                            />
+                                            <div className="relative">
+                                                <Input
+                                                    id="new-password"
+                                                    type={showNewPassword ? "text" : "password"}
+                                                    placeholder="••••••••"
+                                                    className="bg-background/50 pr-10"
+                                                    value={password}
+                                                    onChange={(e) => setPassword(e.target.value)}
+                                                    required
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowNewPassword(!showNewPassword)}
+                                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground focus:outline-none"
+                                                >
+                                                    {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                                </button>
+                                            </div>
                                         </div>
                                         
                                         {/* Security Question Section */}
@@ -291,15 +312,24 @@ export default function Login() {
                                         </div>
                                         <div className="space-y-2">
                                             <Label htmlFor="admin-password">Líder (Senha)</Label>
-                                            <Input
-                                                id="admin-password"
-                                                type="password"
-                                                placeholder="••••••••"
-                                                className="bg-background/50 border-primary/20"
-                                                value={adminPassword}
-                                                onChange={(e) => setAdminPassword(e.target.value)}
-                                                required
-                                            />
+                                            <div className="relative">
+                                                <Input
+                                                    id="admin-password"
+                                                    type={showAdminPassword ? "text" : "password"}
+                                                    placeholder="••••••••"
+                                                    className="bg-background/50 border-primary/20 pr-10"
+                                                    value={adminPassword}
+                                                    onChange={(e) => setAdminPassword(e.target.value)}
+                                                    required
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowAdminPassword(!showAdminPassword)}
+                                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground focus:outline-none"
+                                                >
+                                                    {showAdminPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
 

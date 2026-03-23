@@ -1,8 +1,11 @@
 from sqlalchemy import String, Integer, JSON, Boolean, DateTime, ForeignKey, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime
+from typing import TYPE_CHECKING
 from backend.core.database import Base
 
+if TYPE_CHECKING:
+    from backend.models.device import Device
 
 class Policy(Base):
     __tablename__ = "policies"
