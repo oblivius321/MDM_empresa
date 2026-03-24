@@ -12,13 +12,13 @@ import androidx.security.crypto.MasterKey
  *   • Valores → AES-256-GCM
  *
  * A MasterKey fica no Android Keystore (hardware-backed quando disponível).
- * Nunca armazene device_token em SharedPreferences comuns — ele é uma
- * credencial de autenticação do dispositivo no backend.
  */
 class SecurePreferences(context: Context) {
 
     companion object {
         private const val FILE_NAME            = "elion_mdm_secure_prefs"
+
+        // ─── MDM Agent Keys ──────────────────────────────────────────
         private const val KEY_DEVICE_TOKEN     = "device_token"
         private const val KEY_DEVICE_ID        = "device_id"
         private const val KEY_ENROLLED         = "is_enrolled"
@@ -26,6 +26,16 @@ class SecurePreferences(context: Context) {
         private const val KEY_CHECKIN_INTERVAL = "checkin_interval_seconds"
         private const val KEY_LAST_SYNC        = "last_sync_timestamp"
         private const val DEFAULT_BACKEND_URL  = "https://mdm.suaempresa.com"
+
+        // ─── Kiosk Keys ─────────────────────────────────────────────
+        private const val KEY_KIOSK_ENABLED       = "kiosk_enabled"
+        private const val KEY_ALLOWED_APPS        = "kiosk_allowed_apps"       // JSON array
+        private const val KEY_ADMIN_PASSWORD_HASH = "admin_password_hash"      // bcrypt hash
+        private const val KEY_ADMIN_EMAIL         = "admin_email"
+        private const val KEY_LOGIN_ATTEMPTS      = "login_attempts"
+        private const val KEY_LOCKOUT_UNTIL        = "lockout_until_ms"
+        private const val KEY_SESSION_TOKEN        = "admin_session_token"
+        private const val KEY_SESSION_EXPIRY       = "admin_session_expiry_ms"
     }
 
     private val prefs = EncryptedSharedPreferences.create(
@@ -37,6 +47,8 @@ class SecurePreferences(context: Context) {
         EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
     )
+
+    // ─── MDM Agent ────────────────────────────────────────────────────────────
 
     var deviceToken: String?
         get() = prefs.getString(KEY_DEVICE_TOKEN, null)
@@ -62,7 +74,60 @@ class SecurePreferences(context: Context) {
         get() = prefs.getLong(KEY_LAST_SYNC, 0L)
         set(v) = prefs.edit().putLong(KEY_LAST_SYNC, v).apply()
 
+    // ─── Kiosk ────────────────────────────────────────────────────────────────
+
+    var isKioskEnabled: Boolean
+        get() = prefs.getBoolean(KEY_KIOSK_ENABLED, false)
+        set(v) = prefs.edit().putBoolean(KEY_KIOSK_ENABLED, v).apply()
+
+    /** JSON array of package names, e.g. ["com.app1","com.app2"] */
+    var allowedAppsJson: String
+        get() = prefs.getString(KEY_ALLOWED_APPS, "[]") ?: "[]"
+        set(v) = prefs.edit().putString(KEY_ALLOWED_APPS, v).apply()
+
+    var adminPasswordHash: String?
+        get() = prefs.getString(KEY_ADMIN_PASSWORD_HASH, null)
+        set(v) = prefs.edit().putString(KEY_ADMIN_PASSWORD_HASH, v).apply()
+
+    var adminEmail: String?
+        get() = prefs.getString(KEY_ADMIN_EMAIL, null)
+        set(v) = prefs.edit().putString(KEY_ADMIN_EMAIL, v).apply()
+
+    var loginAttempts: Int
+        get() = prefs.getInt(KEY_LOGIN_ATTEMPTS, 0)
+        set(v) = prefs.edit().putInt(KEY_LOGIN_ATTEMPTS, v).apply()
+
+    var lockoutUntilMs: Long
+        get() = prefs.getLong(KEY_LOCKOUT_UNTIL, 0L)
+        set(v) = prefs.edit().putLong(KEY_LOCKOUT_UNTIL, v).apply()
+
+    var sessionToken: String?
+        get() = prefs.getString(KEY_SESSION_TOKEN, null)
+        set(v) = prefs.edit().putString(KEY_SESSION_TOKEN, v).apply()
+
+    var sessionExpiryMs: Long
+        get() = prefs.getLong(KEY_SESSION_EXPIRY, 0L)
+        set(v) = prefs.edit().putLong(KEY_SESSION_EXPIRY, v).apply()
+
+    // ─── Helpers ──────────────────────────────────────────────────────────────
+
     fun clearAll() = prefs.edit().clear().apply()
 
     fun hasValidToken(): Boolean = !deviceToken.isNullOrBlank() && isEnrolled
+
+    fun isSessionValid(): Boolean {
+        val token = sessionToken
+        val expiry = sessionExpiryMs
+        return !token.isNullOrBlank() && System.currentTimeMillis() < expiry
+    }
+
+    fun clearSession() {
+        sessionToken = null
+        sessionExpiryMs = 0L
+    }
+
+    fun resetLoginAttempts() {
+        loginAttempts = 0
+        lockoutUntilMs = 0L
+    }
 }

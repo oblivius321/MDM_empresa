@@ -12,8 +12,15 @@ import retrofit2.http.*
  */
 interface ApiService {
 
+    // ─── Admin Authentication ─────────────────────────────────────────────────
+    // Usado pelo kiosk para autenticar administradores localmente no dispositivo.
+
+    @POST("api/auth/login")
+    suspend fun adminLogin(
+        @Body request: AdminLoginRequest
+    ): Response<AdminLoginResponse>
+
     // ─── Enrollment ───────────────────────────────────────────────────────────
-    // Não requer token — usa bootstrap_secret para se autenticar pela 1ª vez.
 
     @POST("api/device/enroll")
     suspend fun enroll(

@@ -1,5 +1,6 @@
 package com.elion.mdm.domain
 
+import android.app.ActivityManager
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
@@ -11,17 +12,7 @@ import com.elion.mdm.AdminReceiver
  * DevicePolicyHelper — abstração sobre DevicePolicyManager (DPM).
  *
  * Centraliza todas as operações que requerem privilégio de Device Owner.
- * Cada método verifica se o app é DO antes de executar, evitando
- * SecurityException em ambientes onde o app foi degradado.
- *
- * ─── Resumo de privilégios necessários ───────────────────────────────────────
- * • lockNow()              → Device Admin (mínimo)
- * • wipeData(flags extras) → Device Owner
- * • setLockTaskPackages()  → Device Owner (Kiosk Mode)
- * • setStatusBarDisabled() → Device Owner
- * • setCameraDisabled()    → Device Admin (escopo global requer DO)
- * • reboot()               → Device Owner (API 24+)
- * • addUserRestriction()   → Device Owner
+ * Cada método verifica se o app é DO antes de executar.
  */
 class DevicePolicyHelper(private val context: Context) {
 
@@ -62,10 +53,6 @@ class DevicePolicyHelper(private val context: Context) {
 
     // ─── Wipe ─────────────────────────────────────────────────────────────────
 
-    /**
-     * AÇÃO IRREVERSÍVEL — apaga todos os dados do dispositivo (factory reset).
-     * includeExternalStorage = true também limpa o SD Card.
-     */
     fun wipeDevice(includeExternalStorage: Boolean = false): Result<Unit> = runCatching {
         check(checkDO("wipeDevice")) { "Não é Device Owner" }
         val flags = if (includeExternalStorage) DevicePolicyManager.WIPE_EXTERNAL_STORAGE else 0
@@ -85,25 +72,28 @@ class DevicePolicyHelper(private val context: Context) {
 
     // ─── Status Bar ───────────────────────────────────────────────────────────
 
-    /**
-     * Desabilita a status bar (notificações + quick settings).
-     * Essencial em Kiosk Mode para impedir o usuário de acessar as configurações.
-     * Requer: Device Owner.
-     */
     fun setStatusBarDisabled(disabled: Boolean): Result<Unit> = runCatching {
         check(checkDO("setStatusBarDisabled")) { "Não é Device Owner" }
         dpm.setStatusBarDisabled(admin, disabled)
         Log.i(TAG, "setStatusBarDisabled($disabled)")
     }
 
+    // ─── Keyguard ─────────────────────────────────────────────────────────────
+
+    fun disableKeyguard(): Result<Unit> = runCatching {
+        check(checkDO("disableKeyguard")) { "Não é Device Owner" }
+        dpm.setKeyguardDisabled(admin, true)
+        Log.i(TAG, "Keyguard DESATIVADO")
+    }
+
+    fun enableKeyguard(): Result<Unit> = runCatching {
+        check(checkDO("enableKeyguard")) { "Não é Device Owner" }
+        dpm.setKeyguardDisabled(admin, false)
+        Log.i(TAG, "Keyguard REATIVADO")
+    }
+
     // ─── Kiosk Mode (Lock Task) ───────────────────────────────────────────────
 
-    /**
-     * Define quais pacotes podem entrar em Lock Task Mode (Kiosk).
-     * Após configurar, a Activity alvo chama startLockTask() e o usuário
-     * fica preso no app sem conseguir sair pelo botão Home ou Recents.
-     * Requer: Device Owner.
-     */
     fun setKioskPackages(packages: Array<String>): Result<Unit> = runCatching {
         check(checkDO("setKioskPackages")) { "Não é Device Owner" }
         dpm.setLockTaskPackages(admin, packages)
@@ -114,6 +104,30 @@ class DevicePolicyHelper(private val context: Context) {
         if (isDeviceOwner()) dpm.getLockTaskPackages(admin) else emptyArray()
 
     fun isKioskAllowed(pkg: String): Boolean = getKioskPackages().contains(pkg)
+
+    /**
+     * Configura quais elementos do sistema ficam visíveis no Lock Task Mode.
+     * Por padrão: NENHUM (lockdown total).
+     *
+     * Flags disponíveis:
+     *   LOCK_TASK_FEATURE_NONE            = 0
+     *   LOCK_TASK_FEATURE_SYSTEM_INFO     = 1  (relógio, bateria)
+     *   LOCK_TASK_FEATURE_NOTIFICATIONS   = 2
+     *   LOCK_TASK_FEATURE_HOME            = 4
+     *   LOCK_TASK_FEATURE_OVERVIEW        = 8  (recents)
+     *   LOCK_TASK_FEATURE_GLOBAL_ACTIONS  = 16 (power menu)
+     *   LOCK_TASK_FEATURE_KEYGUARD        = 32
+     */
+    fun setLockTaskFeatures(features: Int = DevicePolicyManager.LOCK_TASK_FEATURE_NONE): Result<Unit> = runCatching {
+        check(checkDO("setLockTaskFeatures")) { "Não é Device Owner" }
+        dpm.setLockTaskFeatures(admin, features)
+        Log.i(TAG, "setLockTaskFeatures($features)")
+    }
+
+    fun isInLockTaskMode(): Boolean {
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        return am.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
+    }
 
     // ─── Screen Timeout ───────────────────────────────────────────────────────
 
@@ -133,7 +147,6 @@ class DevicePolicyHelper(private val context: Context) {
 
     // ─── User Restrictions ────────────────────────────────────────────────────
 
-    /** Impede factory reset manual via Settings. */
     fun setFactoryResetDisabled(disabled: Boolean): Result<Unit> = runCatching {
         check(checkDO("setFactoryResetDisabled")) { "Não é Device Owner" }
         if (disabled) dpm.addUserRestriction(admin, UserManager.DISALLOW_FACTORY_RESET)
@@ -148,9 +161,58 @@ class DevicePolicyHelper(private val context: Context) {
         Log.i(TAG, "DISALLOW_SAFE_BOOT=$disabled")
     }
 
+    /**
+     * Aplica TODAS as restrições de usuário para lockdown completo.
+     * Impede: instalar/desinstalar apps, USB, modificar contas, adicionar usuários,
+     * factory reset, safe mode, montar mídia física.
+     */
+    fun enableFullLockdown(): Result<Unit> = runCatching {
+        check(checkDO("enableFullLockdown")) { "Não é Device Owner" }
+
+        val restrictions = arrayOf(
+            UserManager.DISALLOW_INSTALL_APPS,
+            UserManager.DISALLOW_UNINSTALL_APPS,
+            UserManager.DISALLOW_USB_FILE_TRANSFER,
+            UserManager.DISALLOW_MODIFY_ACCOUNTS,
+            UserManager.DISALLOW_ADD_USER,
+            UserManager.DISALLOW_FACTORY_RESET,
+            UserManager.DISALLOW_SAFE_BOOT,
+            UserManager.DISALLOW_MOUNT_PHYSICAL_MEDIA,
+            UserManager.DISALLOW_CONFIG_MOBILE_NETWORKS,
+        )
+
+        restrictions.forEach { restriction ->
+            dpm.addUserRestriction(admin, restriction)
+        }
+        Log.i(TAG, "Full lockdown APLICADO (${restrictions.size} restrições)")
+    }
+
+    /**
+     * Remove TODAS as restrições de lockdown.
+     */
+    fun disableFullLockdown(): Result<Unit> = runCatching {
+        check(checkDO("disableFullLockdown")) { "Não é Device Owner" }
+
+        val restrictions = arrayOf(
+            UserManager.DISALLOW_INSTALL_APPS,
+            UserManager.DISALLOW_UNINSTALL_APPS,
+            UserManager.DISALLOW_USB_FILE_TRANSFER,
+            UserManager.DISALLOW_MODIFY_ACCOUNTS,
+            UserManager.DISALLOW_ADD_USER,
+            UserManager.DISALLOW_FACTORY_RESET,
+            UserManager.DISALLOW_SAFE_BOOT,
+            UserManager.DISALLOW_MOUNT_PHYSICAL_MEDIA,
+            UserManager.DISALLOW_CONFIG_MOBILE_NETWORKS,
+        )
+
+        restrictions.forEach { restriction ->
+            dpm.clearUserRestriction(admin, restriction)
+        }
+        Log.i(TAG, "Full lockdown REMOVIDO")
+    }
+
     // ─── Reboot ───────────────────────────────────────────────────────────────
 
-    /** Reinicia o dispositivo remotamente. Requer DO + API 24+. */
     fun reboot(): Result<Unit> = runCatching {
         check(checkDO("reboot")) { "Não é Device Owner" }
         dpm.reboot(admin)

@@ -44,7 +44,7 @@ data class DeviceCommand(
 )
 
 data class CommandCompleteRequest(
-    @SerializedName("status")  val status: String,      // "success" | "failed"
+    @SerializedName("status")  val status: String,
     @SerializedName("message") val message: String? = null
 )
 
@@ -58,6 +58,24 @@ data class PolicyResponse(
     @SerializedName("min_password_length")        val minPasswordLength: Int = 6,
     @SerializedName("screen_timeout_seconds")     val screenTimeoutSeconds: Int = 300,
     @SerializedName("checkin_interval_seconds")   val checkinIntervalSeconds: Int = 60
+)
+
+// ─── Admin Authentication ─────────────────────────────────────────────────────
+
+data class AdminLoginRequest(
+    @SerializedName("email")    val email: String,
+    @SerializedName("password") val password: String
+)
+
+data class AdminLoginResponse(
+    @SerializedName("message") val message: String?,
+    @SerializedName("user")    val user: AdminUser?
+)
+
+data class AdminUser(
+    @SerializedName("email")    val email: String,
+    @SerializedName("is_admin") val isAdmin: Boolean,
+    @SerializedName("id")       val id: Int
 )
 
 // ─── Tipos de comando ─────────────────────────────────────────────────────────

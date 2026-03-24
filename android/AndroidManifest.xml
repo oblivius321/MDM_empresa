@@ -10,6 +10,7 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <uses-permission android:name="android.permission.BATTERY_STATS"/>
     <uses-permission android:name="android.permission.READ_PHONE_STATE"/>
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
 
     <!-- ─── Aplicação ───────────────────────────────────────────────────── -->
     <application
@@ -21,7 +22,35 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.ElionMDM">
 
-        <!-- ─── MainActivity ──────────────────────────────────────────── -->
+        <!-- ─── Kiosk Launcher (HOME) ──────────────────────────────── -->
+        <activity
+            android:name=".launcher.KioskLauncherActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="portrait"
+            android:stateNotNeeded="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.HOME"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+            </intent-filter>
+        </activity>
+
+        <!-- ─── Admin Login ────────────────────────────────────────── -->
+        <activity
+            android:name=".admin.AdminLoginActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.ElionMDM"/>
+
+        <!-- ─── Admin Panel ────────────────────────────────────────── -->
+        <activity
+            android:name=".admin.AdminPanelActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.ElionMDM"/>
+
+        <!-- ─── Enrollment MainActivity (kept for technician setup) ── -->
         <activity
             android:name=".presentation.MainActivity"
             android:exported="true"
@@ -32,7 +61,7 @@
             </intent-filter>
         </activity>
 
-        <!-- ─── Device Admin Receiver (ponto de entrada DO) ───────────── -->
+        <!-- ─── Device Admin Receiver (DPC entry point) ───────────── -->
         <receiver
             android:name=".AdminReceiver"
             android:exported="true"
@@ -47,23 +76,25 @@
             </intent-filter>
         </receiver>
 
-        <!-- ─── Boot Receiver ─────────────────────────────────────────── -->
+        <!-- ─── Boot Receiver ─────────────────────────────────────── -->
         <receiver
-            android:name=".BootReceiver"
-            android:exported="true">
-            <intent-filter>
+            android:name=".system.BootReceiver"
+            android:exported="true"
+            android:directBootAware="true">
+            <intent-filter android:priority="999">
                 <action android:name="android.intent.action.BOOT_COMPLETED"/>
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
             </intent-filter>
         </receiver>
 
-        <!-- ─── MDM Foreground Service ────────────────────────────────── -->
+        <!-- ─── MDM Foreground Service ────────────────────────────── -->
         <service
             android:name=".services.MDMForegroundService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice"/>
 
-        <!-- ─── APK Installer Service ─────────────────────────────────── -->
+        <!-- ─── APK Installer Service ─────────────────────────────── -->
         <service
             android:name=".services.ApkInstallerService"
             android:exported="false"

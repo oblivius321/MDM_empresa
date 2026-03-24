@@ -8,6 +8,7 @@ import com.elion.mdm.data.remote.dto.CommandCompleteRequest
 import com.elion.mdm.data.remote.dto.CommandType
 import com.elion.mdm.data.remote.dto.DeviceCommand
 import com.elion.mdm.services.ApkInstallerService
+import com.elion.mdm.system.KioskManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -17,11 +18,8 @@ import kotlinx.coroutines.withContext
  * Fluxo por comando:
  *   1. Recebe DeviceCommand do backend (via polling ou WebSocket)
  *   2. Roteia para o método correto com base em command.type
- *   3. Executa a operação via DevicePolicyHelper
+ *   3. Executa a operação via DevicePolicyHelper / KioskManager
  *   4. Notifica o backend: POST /device/commands/{id}/complete
- *
- * Erros são capturados individualmente — um comando com falha não
- * bloqueia a execução dos próximos na fila.
  */
 class CommandHandler(private val context: Context) {
 
@@ -31,6 +29,7 @@ class CommandHandler(private val context: Context) {
 
     private val api = ApiClient.getInstance(context)
     private val dpm = DevicePolicyHelper(context)
+    private val kioskManager = KioskManager(context)
 
     // ─── Ponto de entrada ─────────────────────────────────────────────────────
 
@@ -78,24 +77,28 @@ class CommandHandler(private val context: Context) {
         Log.w(TAG, "WIPE executado (includeExternal=$includeExternal)")
     }
 
+    /**
+     * Ativa o modo kiosk usando o KioskManager (orquestrador).
+     * Payload opcional: "allowed_packages" (JSON array de pacotes).
+     */
     private fun handleKioskEnable(command: DeviceCommand) {
-        val pkg = command.payload["package"]
-            ?: context.packageName   // default: o próprio agente MDM
+        val allowedPackages = command.payload["allowed_packages"]
+            ?.let { json ->
+                try {
+                    val array = org.json.JSONArray(json)
+                    (0 until array.length()).map { array.getString(it) }
+                } catch (e: Exception) {
+                    emptyList()
+                }
+            } ?: emptyList()
 
-        dpm.setKioskPackages(arrayOf(pkg)).getOrThrow()
-
-        // Inicia Lock Task na Activity principal do pacote alvo
-        val launchIntent = context.packageManager
-            .getLaunchIntentForPackage(pkg)
-            ?.apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
-
-        launchIntent?.let { context.startActivity(it) }
-        Log.i(TAG, "KIOSK_ENABLE para: $pkg")
+        kioskManager.enableKiosk(allowedPackages)
+        Log.i(TAG, "KIOSK_ENABLE via KioskManager (${allowedPackages.size} apps)")
     }
 
     private fun handleKioskDisable() {
-        dpm.setKioskPackages(emptyArray()).getOrThrow()
-        Log.i(TAG, "KIOSK_DISABLE executado")
+        kioskManager.disableKiosk()
+        Log.i(TAG, "KIOSK_DISABLE via KioskManager")
     }
 
     private fun handleCamera(disabled: Boolean) {
@@ -134,10 +137,13 @@ class CommandHandler(private val context: Context) {
                     minPasswordLength    = policy.minPasswordLength,
                     screenTimeoutSeconds = policy.screenTimeoutSeconds
                 )
-                if (policy.kioskModeEnabled && !policy.kioskPackage.isNullOrBlank()) {
-                    dpm.setKioskPackages(arrayOf(policy.kioskPackage!!)).getOrThrow()
+                if (policy.kioskModeEnabled) {
+                    val allowedPkgs = policy.kioskPackage?.let { listOf(it) } ?: emptyList()
+                    kioskManager.enableKiosk(allowedPkgs)
+                } else {
+                    kioskManager.disableKiosk()
                 }
-                Log.i(TAG, "SYNC_POLICY aplicada")
+                Log.i(TAG, "SYNC_POLICY aplicada (kiosk=${policy.kioskModeEnabled})")
             }
         } else {
             error("Falha ao buscar policy: ${response.code()}")
