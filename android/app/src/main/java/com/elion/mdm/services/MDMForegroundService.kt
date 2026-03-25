@@ -1,7 +1,7 @@
 package com.elion.mdm.services
 
 import android.app.*
-import android.content.BatteryManager
+import android.os.BatteryManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build

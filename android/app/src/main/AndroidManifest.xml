@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.elion.mdm">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- ─── Permissões ──────────────────────────────────────────────────── -->
     <uses-permission android:name="android.permission.INTERNET"/>
@@ -63,7 +62,7 @@
 
         <!-- ─── Device Admin Receiver (DPC entry point) ───────────── -->
         <receiver
-            android:name=".AdminReceiver"
+            android:name=".DeviceAdminReceiver"
             android:exported="true"
             android:permission="android.permission.BIND_DEVICE_ADMIN">
             <meta-data

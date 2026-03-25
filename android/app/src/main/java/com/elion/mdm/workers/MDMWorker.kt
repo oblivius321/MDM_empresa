@@ -140,7 +140,7 @@ class MDMWorker(
 
     private fun getBatteryLevel(): Int {
         val bm = applicationContext.getSystemService(Context.BATTERY_SERVICE)
-                as android.app.BatteryManager
-        return bm.getIntProperty(android.app.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                as android.os.BatteryManager
+        return bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
     }
 }

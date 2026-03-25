@@ -72,11 +72,11 @@ if environment == "production":
 else:
     # 🟡 DESENVOLVIMENTO: Origins locais apenas (sem permissão wildcard)
     allowed_origins = [
-        "http://localhost",           # Nginx reverse proxy (porta 80)
-        "http://localhost:8080",      # Nginx porta alternativa
-        "http://localhost:5173",      # Vite dev server
-        "http://localhost:3000",      # Frontend container
-        "http://localhost:8000",      # Backend (para testes)
+        "http://192.168.25.227",           # Nginx reverse proxy (porta 80)
+        "http://192.168.25.227:8080",      # Nginx porta alternativa
+        "http://192.168.25.227:5173",      # Vite dev server
+        "http://192.168.25.227:3000",      # Frontend container
+        "http://192.168.25.227:8000",      # Backend (para testes)
         "http://127.0.0.1",          # Nginx via IP (porta 80)
         "http://127.0.0.1:8080",     # Nginx via IP porta alternativa
         "http://127.0.0.1:5173",

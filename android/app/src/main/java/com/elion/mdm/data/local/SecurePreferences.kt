@@ -25,7 +25,7 @@ class SecurePreferences(context: Context) {
         private const val KEY_BACKEND_URL      = "backend_url"
         private const val KEY_CHECKIN_INTERVAL = "checkin_interval_seconds"
         private const val KEY_LAST_SYNC        = "last_sync_timestamp"
-        private const val DEFAULT_BACKEND_URL  = "https://mdm.suaempresa.com"
+        private const val DEFAULT_BACKEND_URL  = "http://192.168.25.227:8000"
 
         // ─── Kiosk Keys ─────────────────────────────────────────────
         private const val KEY_KIOSK_ENABLED       = "kiosk_enabled"
