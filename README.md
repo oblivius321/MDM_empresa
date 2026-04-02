@@ -542,11 +542,11 @@ echo "0 3 * * * certbot renew --quiet && docker compose restart nginx" | sudo cr
 
 ## 📄 Licença
 
-Este projeto é proprietário. Todos os direitos reservados.
+Este projeto é proprietário. Todos os direitos reservados. O uso indevido e sem autorização do projeto poderá acarretar em sanções legais.
 
 ---
 
 <p align="center">
-  <sub>Developed with ❤️ for enterprise security</sub><br/>
-  <strong>Elion MDM</strong> — Protecting what matters.
+  <sub>Desenvolvido com ❤️ para segurança empresarial</sub><br/>
+  <strong>Elion MDM</strong> — Protegendo o que importa.
 </p>

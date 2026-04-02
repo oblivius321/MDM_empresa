@@ -11,10 +11,15 @@ class DeviceRepository:
         self.db = db
 
     async def add(self, device: Device) -> Device:
-        self.db.add(device)
-        await self.db.commit()
-        await self.db.refresh(device)
-        return device # Return refreshed instance
+        """Adiciona um novo registro com rollback automático em caso de erro."""
+        try:
+            self.db.add(device)
+            await self.db.commit()
+            await self.db.refresh(device)
+            return device
+        except Exception as e:
+            await self.db.rollback()
+            raise e
 
     async def get(self, device_id: str) -> Optional[Device]:
         result = await self.db.execute(
@@ -28,6 +33,30 @@ class DeviceRepository:
         cmd = result.scalars().first()
         if cmd:
             cmd.status = status
+            await self.db.commit()
+            return cmd
+        return None
+
+    async def update_device_command_status(
+        self,
+        command_id: int,
+        status: str,
+        sent_at=None,
+        acked_at=None,
+    ):
+        """
+        Atualiza status de um comando com timestamps opcionais.
+        Usado pelo dispatcher para pending→sent e pelo receiver para sent→acked.
+        """
+        from backend.models.policy import CommandQueue
+        result = await self.db.execute(select(CommandQueue).where(CommandQueue.id == command_id))
+        cmd = result.scalars().first()
+        if cmd:
+            cmd.status = status
+            if sent_at is not None:
+                cmd.sent_at = sent_at
+            if acked_at is not None:
+                cmd.acked_at = acked_at
             await self.db.commit()
             return cmd
         return None
@@ -381,3 +410,50 @@ class DeviceRepository:
         
         result = await self.db.execute(query)
         return result.scalars().all()
+
+    async def get_commands_audit(
+        self,
+        device_id: Optional[str] = None,
+        status: Optional[str] = None,
+        action: Optional[str] = None,
+        issued_by: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[dict]:
+        """
+        Retorna histórico de comandos para auditoria com filtros flexíveis.
+        """
+        from backend.models.policy import CommandQueue
+        query = select(CommandQueue)
+        
+        if device_id:
+            query = query.where(CommandQueue.device_id == device_id)
+        if status:
+            query = query.where(CommandQueue.status == status)
+        if action:
+            query = query.where(CommandQueue.command == action)
+        if issued_by:
+            query = query.where(CommandQueue.issued_by == issued_by)
+            
+        query = query.order_by(CommandQueue.created_at.desc()).offset(offset).limit(limit)
+        
+        result = await self.db.execute(query)
+        cmds = result.scalars().all()
+        
+        return [
+            {
+                "id": c.id,
+                "device_id": c.device_id,
+                "command": c.command,
+                "status": c.status,
+                "error_code": c.error_code,
+                "error_message": c.error_message,
+                "issued_by": c.issued_by,
+                "created_at": c.created_at,
+                "sent_at": c.sent_at,
+                "acked_at": c.acked_at,
+                "completed_at": c.completed_at,
+                "attempts": c.attempts,
+            }
+            for c in cmds
+        ]

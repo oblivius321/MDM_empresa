@@ -40,6 +40,17 @@ export function useDevices(options: UseDevicesOptions = {}) {
       const res = await deviceService.getAll(params);
       const data = res.data;
 
+      // Diagnóstico: Verificar se o mapeamento de ID está funcionando
+      if (import.meta.env.DEV) {
+        const firstDevice = Array.isArray(data) ? data[0] : data.items?.[0];
+        if (firstDevice) {
+           console.log(`[useDevices] Check: id=${firstDevice.id}, device_id=${firstDevice.device_id}`);
+           if (!firstDevice.id || firstDevice.id === 'undefined') {
+             console.error('[useDevices] CRITICAL: device.id is undefined even after mapping!');
+           }
+        }
+      }
+
       // Handle both paginated and array responses
       if (Array.isArray(data)) {
         setDevices(data);

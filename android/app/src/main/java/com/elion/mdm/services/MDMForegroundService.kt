@@ -117,14 +117,13 @@ class MDMForegroundService : Service() {
         val deviceId = prefs.deviceId ?: return
 
         val request = CheckinRequest(
-            deviceId         = deviceId,
             batteryLevel     = getBatteryLevel(),
             deviceModel      = "${Build.MANUFACTURER} ${Build.MODEL}",
             androidVersion   = Build.VERSION.RELEASE,
             complianceStatus = if (dpm.isDeviceOwner()) "compliant" else "non_compliant"
         )
 
-        val response = api.checkin(request)
+        val response = api.checkin(deviceId, request)
         if (response.isSuccessful) {
             prefs.lastSyncTimestamp = System.currentTimeMillis()
             response.body()?.checkinInterval?.let {
@@ -151,8 +150,9 @@ class MDMForegroundService : Service() {
     }
 
     private suspend fun fetchAndExecuteCommands() {
+        val deviceId = prefs.deviceId ?: return
         val api      = ApiClient.getInstance(this)
-        val response = api.getPendingCommands()
+        val response = api.getPendingCommands(deviceId)
 
         if (response.isSuccessful) {
             val commands = response.body() ?: emptyList()

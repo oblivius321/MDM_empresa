@@ -21,32 +21,51 @@ interface ApiService {
     ): Response<AdminLoginResponse>
 
     // ─── Enrollment ───────────────────────────────────────────────────────────
+    // Endpoint: POST /api/enroll
 
-    @POST("api/device/enroll")
+    @POST("api/enroll")
     suspend fun enroll(
         @Body request: EnrollmentRequest
     ): Response<EnrollmentResponse>
 
     // ─── Check-in ─────────────────────────────────────────────────────────────
+    // Endpoint: POST /api/devices/{id}/checkin
 
-    @POST("api/device/checkin")
+    @POST("api/devices/{device_id}/checkin")
     suspend fun checkin(
+        @Path("device_id") deviceId: String,
         @Body request: CheckinRequest
     ): Response<CheckinResponse>
 
     // ─── Commands ─────────────────────────────────────────────────────────────
+    // Endpoint: GET /api/devices/{id}/commands/pending
 
-    @GET("api/device/commands")
-    suspend fun getPendingCommands(): Response<List<DeviceCommand>>
+    @GET("api/devices/{device_id}/commands/pending")
+    suspend fun getPendingCommands(
+        @Path("device_id") deviceId: String
+    ): Response<List<DeviceCommand>>
 
-    @POST("api/device/commands/{id}/complete")
-    suspend fun completeCommand(
-        @Path("id") commandId: Long,
+    // ─── Commands Ack ─────────────────────────────────────────────────────────
+    // Endpoint: POST /api/devices/{id}/commands/{cmd_id}/ack
+
+    @POST("api/devices/{device_id}/commands/{command_id}/ack")
+    suspend fun acknowledgeCommand(
+        @Path("device_id") deviceId: String,
+        @Path("command_id") commandId: Long
+    ): Response<Unit>
+
+    @POST("api/devices/{device_id}/commands/{command_id}/status")
+    suspend fun updateCommandStatus(
+        @Path("device_id") deviceId: String,
+        @Path("command_id") commandId: Long,
         @Body request: CommandCompleteRequest
     ): Response<Unit>
 
     // ─── Policy ───────────────────────────────────────────────────────────────
+    // Nota: Backend atualizado para devices/{id}/policy se necessário
 
-    @GET("api/device/policy")
-    suspend fun getPolicy(): Response<PolicyResponse>
+    @GET("api/devices/{device_id}/policy")
+    suspend fun getPolicy(
+        @Path("device_id") deviceId: String
+    ): Response<PolicyResponse>
 }

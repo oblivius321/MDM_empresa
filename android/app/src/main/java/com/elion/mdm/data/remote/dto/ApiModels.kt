@@ -5,11 +5,11 @@ import com.google.gson.annotations.SerializedName
 // ─── Enrollment ───────────────────────────────────────────────────────────────
 
 data class EnrollmentRequest(
+    @SerializedName("device_id")        val deviceId: String,
+    @SerializedName("name")             val name: String,
+    @SerializedName("device_type")       val deviceType: String = "android",
     @SerializedName("bootstrap_secret") val bootstrapSecret: String,
-    @SerializedName("device_model")     val deviceModel: String,
-    @SerializedName("android_version")  val androidVersion: String,
-    @SerializedName("serial_number")    val serialNumber: String,
-    @SerializedName("imei")             val imei: String? = null
+    @SerializedName("extra_data")       val extraData: Map<String, String>? = null
 )
 
 data class EnrollmentResponse(
@@ -21,7 +21,6 @@ data class EnrollmentResponse(
 // ─── Check-in ─────────────────────────────────────────────────────────────────
 
 data class CheckinRequest(
-    @SerializedName("device_id")         val deviceId: String,
     @SerializedName("battery_level")     val batteryLevel: Int,
     @SerializedName("device_model")      val deviceModel: String,
     @SerializedName("android_version")   val androidVersion: String,

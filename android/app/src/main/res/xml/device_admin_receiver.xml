@@ -1,0 +1,10 @@
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies>
+        <!-- Permissões necessárias para MDM/DPC corporativo -->
+        <force-lock />
+        <wipe-data />
+        <reset-password />
+        <limit-password />
+        <watch-login />
+    </uses-policies>
+</device-admin>

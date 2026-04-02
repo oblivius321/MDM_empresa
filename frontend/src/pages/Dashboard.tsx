@@ -98,9 +98,9 @@ export default function Dashboard() {
         {/* Metric Cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {loading
-            ? Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
+            ? Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={`skeleton-metric-${i}`} />)
             : metricCards.map((card) => (
-                <div key={card.title} className={`metric-card border ${card.border}`}>
+                <div key={`card-${card.title}`} className={`metric-card border ${card.border}`}>
                   <div className="flex items-center justify-between mb-3">
                     <p className="text-xs font-medium text-muted-foreground">{card.title}</p>
                     <div className={`w-8 h-8 rounded-md ${card.bg} flex items-center justify-center`}>
@@ -158,7 +158,7 @@ export default function Dashboard() {
                 </ResponsiveContainer>
                 <div className="flex flex-wrap gap-3 mt-2">
                   {pieData.map((entry) => (
-                    <div key={entry.name} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <div key={`legend-${entry.name}`} className="flex items-center gap-1.5 text-xs text-muted-foreground">
                       <div className="w-2 h-2 rounded-full" style={{ background: entry.color }} />
                       {entry.name}: <span className="text-foreground font-medium">{entry.value}</span>
                     </div>
@@ -196,10 +196,10 @@ export default function Dashboard() {
               <div className="space-y-2">
                 {devLoading ? (
                   Array.from({ length: 3 }).map((_, i) => (
-                    <div key={i} className="h-8 rounded skeleton-shimmer" />
+                    <div key={`recent-skel-${i}`} className="h-8 rounded skeleton-shimmer" />
                   ))
                 ) : recentCheckins.slice(0, 3).map((device) => (
-                  <div key={device.id} className="flex items-center justify-between text-xs">
+                  <div key={`recent-${device.id}`} className="flex items-center justify-between text-xs">
                     <span className="text-foreground truncate max-w-[120px]">{device.name}</span>
                     <StatusBadge status={device.status} showDot={false} />
                   </div>
@@ -221,7 +221,7 @@ export default function Dashboard() {
                   { label: 'Taxa Offline', value: summary.total > 0 ? (summary.offline / summary.total) * 100 : 0, color: 'bg-muted-foreground' },
                   { label: 'Taxa Bloqueados', value: summary.total > 0 ? (summary.locked / summary.total) * 100 : 0, color: 'bg-status-locked' },
                 ].map((stat) => (
-                  <div key={stat.label}>
+                  <div key={`stat-${stat.label}`}>
                     <div className="flex justify-between text-xs mb-1">
                       <span className="text-muted-foreground">{stat.label}</span>
                       <span className="text-foreground font-medium">{stat.value.toFixed(1)}%</span>
@@ -263,9 +263,9 @@ export default function Dashboard() {
               <tbody>
                 {devLoading ? (
                   Array.from({ length: 3 }).map((_, i) => (
-                    <tr key={i} className="border-b border-border/50">
+                    <tr key={`table-skel-row-${i}`} className="border-b border-border/50">
                       {Array.from({ length: 5 }).map((_, j) => (
-                        <td key={j} className="px-5 py-3">
+                        <td key={`table-skel-cell-${i}-${j}`} className="px-5 py-3">
                           <div className="h-4 rounded skeleton-shimmer" />
                         </td>
                       ))}

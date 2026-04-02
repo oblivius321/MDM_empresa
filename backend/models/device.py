@@ -23,6 +23,9 @@ class Device(Base):
     enrollment_date: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     api_key_hash: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    
+    # Armazenar campos EXTRAS que não têm coluna própria (android-specific)
+    metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     # Relationships
     policies: Mapped[List["Policy"]] = relationship(back_populates="device", cascade="all, delete-orphan")

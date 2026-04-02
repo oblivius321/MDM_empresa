@@ -16,24 +16,52 @@ class MDMService:
 
 
     async def enroll_device(self, device_id: str, name: str, device_type: str, **kwargs) -> Tuple[Device, str]:
+        """
+        Realiza o enroll (registro ou atualização) de um dispositivo.
+        Filtra kwargs para evitar erros de colunas inexistentes no SQLAlchemy.
+        """
         from backend.api.device_auth import create_device_token
         token, token_hash = create_device_token(device_id)
         
-        device = await self.repo.get(device_id)
-        if device:
-            # ✅ SEGURANÇA (P1.2): Impedir takeover de devices já cadastrados.
-            # Se já existe, admin precisa deletar explicitamente no painel antes de permitir novo enroll.
-            from fastapi import HTTPException, status
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Este dispositivo já está registrado. Para reinseri-lo, remova-o primeiro pelo painel de controle."
-            )
-            if updated_device:
-                return updated_device, token
-            return device, token # Fallback
+        # 1. Separar campos conhecidos dos campos extras (metadata)
+        # Lista de colunas reais no modelo Device
+        valid_columns = {
+            "name", "device_type", "imei", "model", 
+            "android_version", "company", "status", "is_active"
+        }
         
-        # NOVO DEVICE
-        new_device = Device(device_id=device_id, name=name, device_type=device_type, is_active=True, status="online", api_key_hash=token_hash, **kwargs)
+        device_data = {
+            "device_id": device_id,
+            "name": name,
+            "device_type": device_type,
+            "status": "online",
+            "is_active": True,
+            "api_key_hash": token_hash
+        }
+        
+        metadata = {}
+        for k, v in kwargs.items():
+            if k in valid_columns:
+                device_data[k] = v
+            else:
+                metadata[k] = v
+        
+        device_data["metadata_json"] = metadata
+        
+        # 2. Tentar recuperar o dispositivo existente
+        device = await self.repo.get(device_id)
+        
+        if device:
+            # ✅ RE-ENROLLMENT: Se o bootstrap_secret passou, permitimos atualizar o token
+            # Isso resolve o erro 500 caso o admin queira reinserir um device
+            updated = await self.repo.update_device(device_id, device_data)
+            if not updated:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=500, detail="Falha crítica ao atualizar dispositivo existente")
+            return updated, token
+        
+        # 3. NOVO DEVICE
+        new_device = Device(**device_data)
         added = await self.repo.add(new_device)
         return added, token
 

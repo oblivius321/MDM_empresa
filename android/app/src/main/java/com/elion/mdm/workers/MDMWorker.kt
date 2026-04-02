@@ -82,7 +82,7 @@ class MDMWorker(
 
         return runCatching {
             performCheckin(prefs)
-            fetchCommands()
+            fetchCommands(prefs)
             Log.i(TAG, "MDMWorker concluído com sucesso")
         }.fold(
             onSuccess = { Result.success() },
@@ -101,14 +101,13 @@ class MDMWorker(
         val deviceId = prefs.deviceId ?: return
 
         val request = CheckinRequest(
-            deviceId         = deviceId,
             batteryLevel     = getBatteryLevel(),
             deviceModel      = "${Build.MANUFACTURER} ${Build.MODEL}",
             androidVersion   = Build.VERSION.RELEASE,
             complianceStatus = if (dpm.isDeviceOwner()) "compliant" else "non_compliant"
         )
 
-        val response = api.checkin(request)
+        val response = api.checkin(deviceId, request)
         if (response.isSuccessful) {
             prefs.lastSyncTimestamp = System.currentTimeMillis()
             response.body()?.checkinInterval?.let {
@@ -122,9 +121,10 @@ class MDMWorker(
 
     // ─── Commands ─────────────────────────────────────────────────────────────
 
-    private suspend fun fetchCommands() {
+    private suspend fun fetchCommands(prefs: SecurePreferences) {
+        val deviceId = prefs.deviceId ?: return
         val api      = ApiClient.getInstance(applicationContext)
-        val response = api.getPendingCommands()
+        val response = api.getPendingCommands(deviceId)
 
         if (response.isSuccessful) {
             val commands = response.body() ?: emptyList()

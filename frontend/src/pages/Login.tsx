@@ -8,6 +8,12 @@ import { Shield, ArrowRight, UserPlus, ArrowLeft, Eye, EyeOff } from 'lucide-rea
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import ForgotPassword from '@/components/ForgotPassword';
+import { api } from '@/services/api';
+
+interface SecurityQuestionOption {
+    id: string;
+    label: string;
+}
 
 export default function Login() {
     const navigate = useNavigate();
@@ -29,12 +35,30 @@ export default function Login() {
     const [adminPassword, setAdminPassword] = useState('');
     const [showNewPassword, setShowNewPassword] = useState(false);
     const [showAdminPassword, setShowAdminPassword] = useState(false);
+    const [securityQuestions, setSecurityQuestions] = useState<SecurityQuestionOption[]>([]);
 
     // Redirecionar se já autenticado
     useEffect(() => {
         if (isAuthenticated) {
             navigate('/');
         }
+        
+        // Fetch security questions
+        const fetchQuestions = async () => {
+            try {
+                console.log("🔍 [SecurityQuestions] Buscando perguntas...");
+                const response = await api.get('/auth/security-questions');
+                console.log("✅ [SecurityQuestions] Carregadas:", response.data);
+                setSecurityQuestions(response.data);
+                
+                if (response.data.length > 0 && !securityQuestion) {
+                    setSecurityQuestion(response.data[0].id);
+                }
+            } catch (error) {
+                console.error('❌ [SecurityQuestions] Erro:', error);
+            }
+        };
+        fetchQuestions();
     }, [isAuthenticated, navigate]);
 
     const handleLogin = async (e: React.FormEvent) => {
@@ -265,16 +289,21 @@ export default function Login() {
                                         <div className="pt-3 border-t border-border/30">
                                             <p className="text-xs font-semibold text-muted-foreground mb-3">Pergunta de Segurança (para recuperação de senha)</p>
                                             <div className="space-y-2">
-                                                <Label htmlFor="security-question">Crie uma Pergunta</Label>
-                                                <Input
+                                                <Label htmlFor="security-question">Escolha uma Pergunta</Label>
+                                                <select
                                                     id="security-question"
-                                                    type="text"
-                                                    placeholder="Ex: Qual é o nome do seu primeiro animal de estimação?"
-                                                    className="bg-background/50 text-sm"
+                                                    className="w-full h-10 px-3 py-2 rounded-md border border-input bg-background/50 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
                                                     value={securityQuestion}
                                                     onChange={(e) => setSecurityQuestion(e.target.value)}
                                                     required
-                                                />
+                                                >
+                                                    <option value="" disabled>Selecione uma pergunta...</option>
+                                                    {securityQuestions.map((q) => (
+                                                        <option key={q.id} value={q.id}>
+                                                            {q.label}
+                                                        </option>
+                                                    ))}
+                                                </select>
                                             </div>
                                             <div className="space-y-2 mt-2">
                                                 <Label htmlFor="security-answer">Resposta</Label>

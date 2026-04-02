@@ -6,7 +6,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.os.UserManager
 import android.util.Log
-import com.elion.mdm.DeviceAdminReceiver
+import com.elion.mdm.AdminReceiver
 
 /**
  * DevicePolicyHelper — abstração sobre DevicePolicyManager (DPM).
@@ -23,7 +23,7 @@ class DevicePolicyHelper(private val context: Context) {
     private val dpm: DevicePolicyManager =
         context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
 
-    private val admin: ComponentName = ComponentName(context, DeviceAdminReceiver::class.java)
+    private val admin: ComponentName = ComponentName(context, AdminReceiver::class.java)
 
     // ─── Verificações ─────────────────────────────────────────────────────────
 

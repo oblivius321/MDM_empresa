@@ -50,7 +50,7 @@ export default function ForgotPassword({ onBack }: ForgotPasswordProps) {
             });
 
             setSecurityQuestion(response.data.security_question);
-            setResetToken(response.data.reset_token);
+            setResetToken(response.data.recovery_token);
             setStep('security-question');
 
             toast({
@@ -84,7 +84,7 @@ export default function ForgotPassword({ onBack }: ForgotPasswordProps) {
 
         try {
             const response = await api.post('/auth/verify-security-answer', {
-                email,
+                recovery_token: resetToken,
                 security_answer: securityAnswer
             });
 
@@ -133,7 +133,7 @@ export default function ForgotPassword({ onBack }: ForgotPasswordProps) {
 
         try {
             await api.post('/auth/reset-password', {
-                email,
+                reset_token: resetToken,
                 new_password: newPassword,
                 confirm_password: confirmPassword
             });

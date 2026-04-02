@@ -3,6 +3,8 @@ package com.elion.mdm.domain
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import kotlinx.coroutines.withContext
+import com.elion.mdm.data.local.SecurePreferences
 import com.elion.mdm.data.remote.ApiClient
 import com.elion.mdm.data.remote.dto.CommandCompleteRequest
 import com.elion.mdm.data.remote.dto.CommandType
@@ -10,7 +12,6 @@ import com.elion.mdm.data.remote.dto.DeviceCommand
 import com.elion.mdm.services.ApkInstallerService
 import com.elion.mdm.system.KioskManager
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 /**
  * CommandHandler — roteador e executor de comandos remotos.
@@ -27,6 +28,7 @@ class CommandHandler(private val context: Context) {
         private const val TAG = "ElionCommandHandler"
     }
 
+    private val prefs = SecurePreferences(context)
     private val api = ApiClient.getInstance(context)
     private val dpm = DevicePolicyHelper(context)
     private val kioskManager = KioskManager(context)
@@ -128,7 +130,8 @@ class CommandHandler(private val context: Context) {
     }
 
     private suspend fun handleSyncPolicy() {
-        val response = api.getPolicy()
+        val deviceId = prefs.deviceId ?: return
+        val response = api.getPolicy(deviceId)
         if (response.isSuccessful) {
             response.body()?.let { policy ->
                 dpm.applyPolicy(
@@ -162,8 +165,10 @@ class CommandHandler(private val context: Context) {
             )
         }
 
+        val deviceId = prefs.deviceId ?: return
+
         runCatching {
-            api.completeCommand(commandId, req)
+            api.updateCommandStatus(deviceId, commandId, req)
         }.onFailure {
             Log.e(TAG, "Falha ao notificar backend para #$commandId: ${it.message}")
         }

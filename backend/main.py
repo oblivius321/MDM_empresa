@@ -1,5 +1,6 @@
 from fastapi import FastAPI
-from backend.api import routes, auth
+from backend.api import routes
+from backend.api.auth import router as auth_router
 from backend.core.database import engine, Base
 import contextlib
 import os
@@ -35,7 +36,164 @@ async def lifespan(app: FastAPI):
             print(f"⚠️  RBAC initialization: {e}")
         finally:
             await async_session.close()
-    
+
+    # ── WATCHDOG DE PRESENÇA ────────────────────────────────────────────────────
+    # Inicia o loop de detecção de zombie connections em background.
+    # Varre a cada 30s e marca offline dispositivos sem heartbeat > 65s.
+    from backend.api.websockets import manager
+    manager.start_watchdog()
+    print("🛡️ Watchdog de Presença iniciado.")
+
+    # ── WATCHDOG DE COMANDOS (Dual-Timeout — Ajuste 3) ──────────────────────────
+    # Duas janelas de timeout com diagnóstico distinto:
+    #   sent_timeout  (30s) → device não confirmou recepção → failed_no_ack
+    #   acked_timeout (90s) → device confirmou mas não executou → failed_no_result
+    import asyncio
+    async def command_timeout_watchdog():
+        import logging
+        from datetime import datetime, timezone, timedelta
+        from backend.core.database import async_session_maker
+        from backend.models.policy import CommandQueue
+        from sqlalchemy import and_
+        from sqlalchemy.future import select
+
+        wd_logger = logging.getLogger("cmd_watchdog")
+        SENT_TIMEOUT_SECONDS  = 30   # sem ACK após 30s
+        ACKED_TIMEOUT_SECONDS = 90   # sem RESULT após 90s da acked_at
+
+        while True:
+            await asyncio.sleep(30)
+            try:
+                async with async_session_maker() as db:
+                    now = datetime.now(timezone.utc)
+
+                    # ── Janela 1: sent → failed_no_ack ────────────────────────
+                    sent_cutoff = now - timedelta(seconds=SENT_TIMEOUT_SECONDS)
+                    res1 = await db.execute(
+                        select(CommandQueue).where(
+                            and_(
+                                CommandQueue.status == "sent",
+                                CommandQueue.sent_at < sent_cutoff,
+                            )
+                        )
+                    )
+                    for cmd in res1.scalars().all():
+                        cmd.status = "failed_no_ack"
+                        cmd.error_code = "no_ack"
+                        cmd.error_message = f"Device não confirmou recepção em {SENT_TIMEOUT_SECONDS}s"
+                        cmd.completed_at = now
+                        wd_logger.warning(
+                            f"⏰ [CMD no_ack] cmd_id={cmd.id} action={cmd.command} "
+                            f"device={cmd.device_id} → failed_no_ack"
+                        )
+                        await manager.broadcast_to_dashboards({
+                            "type": "CMD_FAILED",
+                            "device_id": cmd.device_id,
+                            "command_id": cmd.id,
+                            "action": cmd.command,
+                            "status": "failed_no_ack",
+                            "error": cmd.error_message,
+                        })
+                        # Ajuste 2: métricas de timeout
+                        try:
+                            from backend.api.command_dispatcher import emit_command_metrics
+                            emit_command_metrics(cmd)
+                        except Exception:
+                            pass
+
+                    # ── Janela 2: acked → failed_no_result ────────────────────
+                    acked_cutoff = now - timedelta(seconds=ACKED_TIMEOUT_SECONDS)
+                    res2 = await db.execute(
+                        select(CommandQueue).where(
+                            and_(
+                                CommandQueue.status == "acked",
+                                CommandQueue.acked_at < acked_cutoff,
+                            )
+                        )
+                    )
+                    for cmd in res2.scalars().all():
+                        cmd.status = "failed_no_result"
+                        cmd.error_code = "no_result"
+                        cmd.error_message = f"Device não reportou resultado em {ACKED_TIMEOUT_SECONDS}s após ACK"
+                        cmd.completed_at = now
+                        wd_logger.warning(
+                            f"⏰ [CMD no_result] cmd_id={cmd.id} action={cmd.command} "
+                            f"device={cmd.device_id} → failed_no_result"
+                        )
+                        await manager.broadcast_to_dashboards({
+                            "type": "CMD_FAILED",
+                            "device_id": cmd.device_id,
+                            "command_id": cmd.id,
+                            "action": cmd.command,
+                            "status": "failed_no_result",
+                            "error": cmd.error_message,
+                        })
+                        # Ajuste 2: métricas de timeout
+                        try:
+                            from backend.api.command_dispatcher import emit_command_metrics
+                            emit_command_metrics(cmd)
+                        except Exception:
+                            pass
+
+                    await db.commit()
+            except Exception as e:
+                wd_logger.error(f"[CMD Watchdog] Erro: {e}")
+
+    asyncio.create_task(command_timeout_watchdog())
+    print("⏰ Watchdog de Comandos (Dual-Timeout) iniciado.")
+
+    # ── WATCHDOG DE COMPLIANCE (Fase 3) ───────────────────────────────
+    # Varre o banco a cada 5 min em busca de devices com policies
+    # atribuídas que não tiveram compliance check recente.
+    async def compliance_watchdog():
+        import logging
+        from datetime import datetime, timezone, timedelta
+        from backend.core.database import async_session_maker
+        from backend.models.policy import DevicePolicy, PolicyState
+        from sqlalchemy.future import select
+        from sqlalchemy import distinct
+
+        cw_logger = logging.getLogger("compliance_watchdog")
+        CHECK_INTERVAL = 300  # 5 minutos
+        STALE_THRESHOLD = timedelta(hours=1)  # Re-check se > 1h desde última avaliação
+
+        while True:
+            await asyncio.sleep(CHECK_INTERVAL)
+            try:
+                async with async_session_maker() as db:
+                    # Busca devices com policies atribuídas
+                    result = await db.execute(
+                        select(distinct(DevicePolicy.device_id))
+                    )
+                    device_ids = [row[0] for row in result.all()]
+
+                    now = datetime.now(timezone.utc)
+                    for did in device_ids:
+                        # Verifica se precisa re-checar
+                        state_result = await db.execute(
+                            select(PolicyState).where(PolicyState.device_id == did)
+                        )
+                        state = state_result.scalar_one_or_none()
+
+                        needs_check = (
+                            not state
+                            or not state.last_enforced_at
+                            or (now - state.last_enforced_at) > STALE_THRESHOLD
+                        )
+
+                        if needs_check and (
+                            not state or state.last_compliance_status != "failed_loop"
+                        ):
+                            from backend.services.drift_detector import evaluate_compliance
+                            asyncio.create_task(evaluate_compliance(did))
+                            cw_logger.info(f"🔍 [ComplianceWatchdog] Re-check device={did}")
+
+            except Exception as e:
+                cw_logger.error(f"[ComplianceWatchdog] Erro: {e}")
+
+    asyncio.create_task(compliance_watchdog())
+    print("🛡️ Watchdog de Compliance (Fase 3) iniciado.")
+
     yield
 
 app = FastAPI(title="MDM Projeto", lifespan=lifespan)
@@ -103,12 +261,16 @@ app.add_middleware(
 from backend.api import websocket_routes
 # ✅ NOVO: Importar rotas RBAC
 from backend.api import rbac_routes
+# ✅ FASE 3: Importar rotas de Policy Enterprise
+from backend.api import policy_routes
 
 app.include_router(routes.router, prefix="/api")
-app.include_router(auth.router, prefix="/api")
+app.include_router(auth_router, prefix="/api/auth")
 app.include_router(websocket_routes.router, prefix="/api")
 # ✅ NOVO: Registrar rotas RBAC
 app.include_router(rbac_routes.router, prefix="/api")
+# ✅ FASE 3: Registrar rotas de Policy Enterprise
+app.include_router(policy_routes.router)
 
 @app.get("/")
 def root():

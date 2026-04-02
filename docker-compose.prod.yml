@@ -1,8 +1,3 @@
-###############################################
-# Elion MDM – Production Overrides
-# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-###############################################
-
 services:
   backend:
     # Sem --reload, sem volume mount

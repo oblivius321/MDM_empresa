@@ -84,7 +84,11 @@ class MainActivity : AppCompatActivity() {
                 btnEnroll.isEnabled    = !state.isLoading
 
                 if (!state.errorMessage.isNullOrBlank()) {
-                    tvEnrollError.text       = state.errorMessage
+                    if (state.errorMessage?.contains("404") == true) {
+                        tvEnrollError.text = "${state.errorMessage}\n💡 Dica: Verifique se a porta é 8000 (Backend) e não 3000 (Frontend)."
+                    } else {
+                        tvEnrollError.text = state.errorMessage
+                    }
                     tvEnrollError.visibility = View.VISIBLE
                 } else {
                     tvEnrollError.visibility = View.GONE

@@ -2,6 +2,7 @@ package com.elion.mdm.data.repository
 
 import android.content.Context
 import android.os.Build
+import android.provider.Settings
 import android.util.Log
 import com.elion.mdm.data.local.SecurePreferences
 import com.elion.mdm.data.remote.ApiClient
@@ -41,12 +42,18 @@ class DeviceRepository(private val context: Context) {
             prefs.backendUrl = backendUrl
             ApiClient.invalidate()
 
+            val deviceId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: "UNKNOWN_${System.currentTimeMillis()}"
+
             val api     = ApiClient.getInstance(context)
             val request = EnrollmentRequest(
+                deviceId        = deviceId,
+                name            = "${Build.MANUFACTURER} ${Build.MODEL}",
+                deviceType      = "android",
                 bootstrapSecret = bootstrapSecret,
-                deviceModel     = "${Build.MANUFACTURER} ${Build.MODEL}",
-                androidVersion  = Build.VERSION.RELEASE,
-                serialNumber    = Build.SERIAL.takeIf { it != Build.UNKNOWN } ?: "UNKNOWN"
+                extraData       = mapOf(
+                    "android_version" to Build.VERSION.RELEASE,
+                    "serial_number"   to (Build.SERIAL.takeIf { it != Build.UNKNOWN } ?: "UNKNOWN")
+                )
             )
 
             val response = api.enroll(request)

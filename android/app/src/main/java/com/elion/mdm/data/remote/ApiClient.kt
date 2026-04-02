@@ -60,12 +60,23 @@ object ApiClient {
 
         return OkHttpClient.Builder()
             .addInterceptor(AuthInterceptor(context))
+            .addInterceptor(URLInterceptor()) // Novo: Log de URL Explícito
             .addInterceptor(logging)
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(30,  TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .build()
+    }
+
+    // ─── URL Logger Interceptor ───────────────────────────────────────────────
+
+    private class URLInterceptor : Interceptor {
+        override fun intercept(chain: Interceptor.Chain): Response {
+            val request = chain.request()
+            android.util.Log.i("ElionAPI", "🚀 REQUISIÇÃO: [${request.method}] ${request.url}")
+            return chain.proceed(request)
+        }
     }
 
     // ─── Auth Interceptor ─────────────────────────────────────────────────────
@@ -76,7 +87,8 @@ object ApiClient {
             val req   = chain.request().newBuilder().apply {
                 addHeader("Content-Type", "application/json")
                 prefs.deviceToken?.takeIf { it.isNotBlank() }?.let {
-                    addHeader("Authorization", "Bearer $it")
+                    // 🛡️ Alinhamento Backend Enterprise: Usar header customizado para Devices
+                    addHeader("X-Device-Token", it)
                 }
                 prefs.deviceId?.takeIf { it.isNotBlank() }?.let {
                     addHeader("X-Device-ID", it)
@@ -88,5 +100,16 @@ object ApiClient {
 
     // ─── Util ─────────────────────────────────────────────────────────────────
 
-    private fun normalizeUrl(url: String) = if (url.endsWith("/")) url else "$url/"
+    private fun normalizeUrl(url: String): String {
+        var normalized = url.trim()
+        if (normalized.isBlank()) return "http://localhost:8000/"
+        
+        // Garante prefixo http
+        if (!normalized.startsWith("http://") && !normalized.startsWith("https://")) {
+            normalized = "http://$normalized"
+        }
+        
+        // Garante barra final para Retrofit
+        return if (normalized.endsWith("/")) normalized else "$normalized/"
+    }
 }

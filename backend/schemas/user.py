@@ -2,6 +2,7 @@ from pydantic import BaseModel, EmailStr, ConfigDict, Field
 from typing import Optional, List
 from datetime import datetime
 from enum import Enum
+from backend.core.constants import SecurityQuestion
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -10,7 +11,7 @@ class UserLogin(BaseModel):
 class UserCreate(BaseModel):
     email: EmailStr
     password: str
-    security_question: str = Field(..., min_length=5, max_length=255)
+    security_question: SecurityQuestion
     security_answer: str = Field(..., min_length=2, max_length=255)
     admin_email: EmailStr
     admin_password: str
@@ -60,13 +61,13 @@ class ForgotPasswordResponse(BaseModel):
     """Resposta do backend: confirmação e pergunta de segurança"""
     message: str
     email: EmailStr
-    security_question: str
-    recovery_token: str  # Token com type="password_recover_step1" e JTI
+    security_question: str  # Retorna o label amigável ao usuário
+    recovery_token: str  # Token com type="password_recover_step1"
     expires_in_minutes: int = 30
 
 class VerifySecurityAnswerRequest(BaseModel):
     """Tela 2: Usuário responde a pergunta de segurança"""
-    recovery_token: str  # Token da etapa anterior
+    recovery_token: str  # Token da etapa anterior (step1)
     security_answer: str
 
 class VerifySecurityAnswerResponse(BaseModel):
@@ -77,7 +78,7 @@ class VerifySecurityAnswerResponse(BaseModel):
 
 class ResetPasswordRequest(BaseModel):
     """Tela 3: Usuário define nova senha com token de autorização"""
-    reset_token: str  # Token da etapa anterior com type="password_reset_authorized"
+    reset_token: str  # Token da etapa anterior (step2)
     new_password: str = Field(..., min_length=8)
     confirm_password: str = Field(..., min_length=8)
 

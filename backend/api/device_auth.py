@@ -23,16 +23,27 @@ def verify_device_token(token: str, stored_hash: str) -> bool:
 async def get_current_device(
     request: Request,
     x_device_token: Optional[str] = Header(None),
-    token: Optional[str] = Query(None), # Para websockets
+    token: Optional[str] = Query(None), # Para websockets (fallback seguro)
 ) -> Device:
-    # Priorizar header, fallback para query (útil para websockets)
+    # 🛡️ Padrão Enterprise: Headers estritamente separados
+    # Device NÃO deve usar o header 'Authorization' (reservado para Admin/JWT)
     device_token = x_device_token or token
     
     if not device_token:
+        # Rejeitar se o device tentar usar Authorization em vez de X-Device-Token
+        if request.headers.get("Authorization"):
+            raise HTTPException(
+                status_code=401, 
+                detail="Invalid auth context. Devices must use X-Device-Token."
+            )
         raise HTTPException(status_code=401, detail="Device token missing")
         
     try:
-        device_id, _ = device_token.split(":", 1)
+        # Formato esperado: "device_id:secret"
+        parts = device_token.split(":", 1)
+        if len(parts) != 2:
+            raise ValueError()
+        token_device_id = parts[0]
     except ValueError:
         raise HTTPException(status_code=401, detail="Invalid device token format")
         
@@ -41,22 +52,33 @@ async def get_current_device(
     db = await anext(db_gen)
     
     try:
-        result = await db.execute(select(Device).where(Device.device_id == device_id))
+        result = await db.execute(select(Device).where(Device.device_id == token_device_id))
         device = result.scalar_one_or_none()
         
         if not device:
-            raise HTTPException(status_code=401, detail="Device not found")
+            raise HTTPException(status_code=401, detail="Device not registered")
             
+        # Validação de Hash (API Key)
         if not device.api_key_hash or not verify_device_token(device_token, device.api_key_hash):
-            raise HTTPException(status_code=401, detail="Invalid device token")
+            raise HTTPException(status_code=401, detail="Invalid device credentials")
             
         if not device.is_active:
-            raise HTTPException(status_code=403, detail="Device is inactive")
+            raise HTTPException(status_code=403, detail="Device is deactivated")
             
-        # Verificar se a rota atual acessa o mesmo device_id (autorização)
+        # 🛡️ SEGURANÇA (Padrão Enterprise): Validação de Escopo (Path vs Token)
+        # Impede que Device A acesse recursos do Device B usando seu próprio token
         path_device_id = request.path_params.get("device_id")
         if path_device_id and path_device_id != device.device_id:
-            raise HTTPException(status_code=403, detail="Not authorized to access this device's resources")
+             import logging
+             logger = logging.getLogger("security")
+             logger.warning(
+                 f"🔥 [Security Alert] Cross-device access attempt! "
+                 f"Token_Device: {device.device_id}, Path_Device: {path_device_id}"
+             )
+             raise HTTPException(
+                 status_code=403, 
+                 detail="Access denied: Resource belongs to another device."
+             )
             
         return device
     finally:

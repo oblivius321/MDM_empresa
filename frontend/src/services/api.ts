@@ -56,13 +56,28 @@ export function buildWebSocketUrl(path: string) {
     return path;
   }
 
+  // Se a BASE_URL for absoluta (ex: http://192...:8000), usamos o mesmo host/porta pro WS
   if (API_BASE_URL.startsWith('http')) {
     const url = new URL(API_BASE_URL);
     const wsProtocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    // Substitui http/https por ws/wss e mantém o host completo (incluindo porta se houver)
     return `${wsProtocol}//${url.host}${joinPath(url.pathname, path)}`;
   }
 
+  // Fallback: Se a API_BASE_URL for relativa (ex: /api), supomos que o WS está no mesmo host
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  
+  // CRÍTICO: Se estamos na porta 3000 (Vite), mas o proxy Nginx está na 80, 
+  // o WebSocket NÃO deve ir para a 3000. Forçamos para a porta padrão (80/443) 
+  // ou a porta que o Nginx está escutando se for diferente.
+  const host = window.location.hostname;
+  
+  // Em desenvolvimento Docker, o Nginx está na 80. O Vite na 3000.
+  // Se o usuário acessa via :3000, redirecionamos o WS para a porta 80 do Nginx.
+  if (window.location.port === '3000') {
+      return `${wsProtocol}//${host}${joinPath(API_BASE_URL, path)}`;
+  }
+
   return `${wsProtocol}//${window.location.host}${joinPath(API_BASE_URL, path)}`;
 }
 
@@ -79,9 +94,20 @@ export const api = axios.create({
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    // 🛡️ Interceptor Inteligente: Só desloga o Admin se o erro 401 for realmente dele
     if (error.response?.status === 401) {
+      const isDeviceRoute = error.config?.url?.includes('/devices/');
+      const hasAdminAuth = !!error.config?.headers?.['Authorization'];
+
+      // Se for uma rota de device SEM header de Admin, o erro é do Device, não do Admin.
+      // NÃO devemos deslogar o Admin nesse caso.
+      if (isDeviceRoute && !hasAdminAuth) {
+        console.warn('⚠️ [Auth] Device auth failed, but Admin session preserved.');
+        return Promise.reject(error);
+      }
+
+      // Caso contrário, é erro de sessão do Admin (Dashboard)
       localStorage.removeItem('auth_user');
-      // Force refresh to trigger state sync if necessary
       if (window.location.pathname !== '/login') {
         window.location.href = '/login';
       }
@@ -96,6 +122,7 @@ export type DeviceStatus = 'online' | 'offline' | 'locked' | 'syncing';
 
 export interface Device {
   id: string;
+  device_id: string;
   name: string;
   imei: string;
   model?: string;
@@ -143,17 +170,46 @@ export interface PaginatedDevices {
   size: number;
 }
 
+// ─── Mapper Layer ────────────────────────────────────────────────────────────
+
+export function mapDevice(data: any): Device {
+  if (!data) return data;
+  return {
+    ...data,
+    // Garante que o frontend sempre tenha 'id' mapeado do 'device_id' do backend
+    id: data.id || data.device_id || "unknown",
+    device_id: data.device_id || data.id || "unknown",
+  };
+}
+
+export function mapDevices(data: Device[] | PaginatedDevices): Device[] | PaginatedDevices {
+  if (Array.isArray(data)) {
+    return data.map(mapDevice);
+  }
+  if (data && data.items) {
+    return {
+      ...data,
+      items: data.items.map(mapDevice),
+    };
+  }
+  return data;
+}
+
 // ─── Device Endpoints ────────────────────────────────────────────────────────
 
 export const deviceService = {
-  getAll: (params?: { status?: string; search?: string; page?: number; size?: number }) =>
-    api.get<Device[] | PaginatedDevices>('/devices', { params }),
+  getAll: async (params?: { status?: string; search?: string; page?: number; size?: number }) => {
+    const res = await api.get<Device[] | PaginatedDevices>('/devices', { params });
+    return { ...res, data: mapDevices(res.data) };
+  },
 
   getSummary: () =>
     api.get<DeviceSummary>('/devices/summary'),
 
-  getById: (id: string) =>
-    api.get<Device>(`/devices/${id}`),
+  getById: async (id: string) => {
+    const res = await api.get<Device>(`/devices/${id}`);
+    return { ...res, data: mapDevice(res.data) };
+  },
 
   getTelemetry: (id: string) =>
     api.get<any>(`/devices/${id}/telemetry`),

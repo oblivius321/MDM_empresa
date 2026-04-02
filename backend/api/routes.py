@@ -30,51 +30,37 @@ def get_service(repo: DeviceRepository = Depends(get_repo)) -> MDMService:
 async def enroll(
     request: Request,
     req: DeviceEnrollRequest, 
-    service: MDMService = Depends(get_service),
-    db: AsyncSession = Depends(get_db)
+    service: MDMService = Depends(get_service)
 ):
     """
     Enroll SEGURO de dispositivo Android.
-    
-    Valida:
-    1. BOOTSTRAP_SECRET correto (impede takeover por device_id)
-    2. device_id único ou atualização legítima
-    3. Limita 10 enrolls por hora por IP (DDoS)
-    
-    Retorna:
-    - device_token para comunicação futura
-    - api_url para o device conectar
     """
     from backend.core.config import BOOTSTRAP_SECRET
-    from backend.api.device_auth import create_device_token
+    import logging
     
-    # ⚠️ CRÍTICO: Validar bootstrap secret
+    logger_error = logging.getLogger("error")
+    logger_security = logging.getLogger("security")
+    
+    # 🔍 1. Validação de Segurança Crítica (Bootstrap Secret)
     if not req.bootstrap_secret or req.bootstrap_secret != BOOTSTRAP_SECRET:
-        # Log para detecção de ataque
-        import logging
-        logger = logging.getLogger("security")
-        logger.warning(f"⚠️ ENROLL ATTEMPT COM BOOTSTRAP_SECRET INVÁLIDO: device_id={req.device_id}, ip={request.client.host}")
-        
+        logger_security.warning(
+            f"❌ [Security Denial] Tentativa de enroll com SECRET INVÁLIDO | "
+            f"device_id: {req.device_id}, ip: {request.client.host}"
+        )
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Bootstrap secret inválido. Entre em contato com seu administrador."
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token de segurança bootstrapping inválido."
         )
     
-    # Validar campos básicos
-    if not req.device_id or len(req.device_id) < 1 or len(req.device_id) > 255:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="device_id inválido"
-        )
-    
-    if not req.name or len(req.name) < 1 or len(req.name) > 255:
+    # 🔍 2. Validação de Formato de Dados
+    if not req.device_id or len(req.device_id) < 3:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="name inválido"
+            detail="O device_id deve ter pelo menos 3 caracteres."
         )
-    
+
     try:
-        # Chamar service para enroll device
+        # ⚙️ 3. Processamento de Enroll no Service (possui lógica de UPSERT/Filtro)
         device, device_token = await service.enroll_device(
             req.device_id, 
             req.name, 
@@ -82,32 +68,45 @@ async def enroll(
             **(req.extra_data or {})
         )
         
-        # Notificar dashboards de novo device
-        await manager.broadcast_to_dashboards({
-            "type": "DEVICE_ENROLLED",
-            "device_id": device.device_id,
-            "name": device.name,
-            "status": device.status
-        })
+        # 📡 4. Notificação via WebSocket para o Painel
+        try:
+            await manager.broadcast_to_dashboards({
+                "type": "DEVICE_ENROLLED",
+                "device_id": device.device_id,
+                "name": device.name,
+                "status": device.status
+            })
+        except Exception as ws_err:
+            logger_error.error(f"⚠️ Erro ao notificar dashboards (non-critical): {str(ws_err)}")
         
         return {
-            "message": "Dispositivo enrolled com sucesso",
+            "message": "Dispositivo registrado com sucesso e autorizado.",
             "device_id": device.device_id,
             "device_token": device_token,
             "api_url": os.getenv("API_URL", "http://localhost:8000"),
             "enrollment_status": "success"
         }
+
+    except HTTPException as http_ex:
+        # Repassa exceções controladas da camada de service (ex: 403, 400)
+        raise http_ex
+
     except Exception as e:
-        import logging
-        logger = logging.getLogger("error")
-        logger.error(f"Erro durante enroll: {str(e)}")
+        # 🛑 5. Tratamento de Erros Inesperados (Rollback já foi feito no Repo se necessário)
+        error_type = type(e).__name__
+        logger_error.error(
+            f"🔥 [ENROLL CRASH] Erro crítico inesperado: {error_type} | "
+            f"MSG: {str(e)} | device_id: {req.device_id}"
+        )
+        
+        # Em produção, ocultamos detalhes sensíveis do erro no retorno JSON
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Erro ao processar enroll"
+            detail="Ocorreu um erro interno ao processar seu registro. Tente novamente em instantes."
         )
 
 
-@router.get("/devices", response_model=List[DeviceResponse])
+@router.get("/devices", response_model=List[DeviceResponse], response_model_by_alias=True)
 async def list_devices(
     status: Optional[str] = None,
     search: Optional[str] = None,
@@ -163,7 +162,7 @@ async def remove_device(
     return {"status": "removed"}
 
 
-@router.get("/devices/{device_id}", response_model=DeviceResponse)
+@router.get("/devices/{device_id}", response_model=DeviceResponse, response_model_by_alias=True)
 async def get_device(
     device_id: str, 
     service: MDMService = Depends(get_service),
@@ -197,34 +196,82 @@ async def get_device_telemetry(
     }
 
 
-@router.post("/devices/{device_id}/lock")
-async def lock_device(device_id: str, service: MDMService = Depends(get_service), current_user: User = Depends(get_current_user)):
-    d = await service.update_device(device_id, {"status": "locked"})
-    if not d:
+@router.post("/devices/{device_id}/lock", tags=["Comandos"])
+async def lock_device(
+    device_id: str,
+    service: MDMService = Depends(get_service),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Envia comando de bloqueio de tela para o device.
+
+    Fluxo:
+      1. Persiste na CommandQueue (status=pending)
+      2. Tenta entrega imediata via WebSocket → status=sent
+      3. Se offline → mantém pending para entrega no reconnect
+    """
+    device = await service.get_device(device_id)
+    if not device:
         raise HTTPException(status_code=404, detail="Device not found")
-        
-    await manager.send_command_to_device(device_id, {"command": "lock_device"})
-    return {"status": "locked"}
+
+    from backend.api.command_dispatcher import dispatch_command
+    try:
+        result = await dispatch_command(
+            service, manager, device_id, "lock_device",
+            issued_by=current_user.email,
+        )
+    except OverflowError as e:
+        raise HTTPException(status_code=429, detail=str(e))
+    return result
 
 
-@router.post("/devices/{device_id}/reboot")
-async def reboot_device(device_id: str, service: MDMService = Depends(get_service), current_user: User = Depends(get_current_user)):
-    # Since we added command queues, let's use it for reboot too
-    ok = await service.repo.add_command(device_id, "reboot_device")
-    if not ok:
+@router.post("/devices/{device_id}/reboot", tags=["Comandos"])
+async def reboot_device(
+    device_id: str,
+    service: MDMService = Depends(get_service),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Envia comando de reinicialização para o device.
+    """
+    device = await service.get_device(device_id)
+    if not device:
         raise HTTPException(status_code=404, detail="Device not found")
-    
-    await manager.send_command_to_device(device_id, {"command": "reboot_device"})
-    return {"status": "command_sent", "command": "reboot_device"}
 
-@router.post("/devices/{device_id}/wipe")
-async def wipe_device(device_id: str, service: MDMService = Depends(get_service), current_user: User = Depends(get_current_user)):
-    ok = await service.wipe_device(device_id)
-    if not ok:
+    from backend.api.command_dispatcher import dispatch_command
+    try:
+        result = await dispatch_command(
+            service, manager, device_id, "reboot_device",
+            issued_by=current_user.email,
+        )
+    except OverflowError as e:
+        raise HTTPException(status_code=429, detail=str(e))
+    return result
+
+
+@router.post("/devices/{device_id}/wipe", tags=["Comandos"])
+async def wipe_device(
+    device_id: str,
+    service: MDMService = Depends(get_service),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Envia comando de wipe (reset de fábrica) para o device.
+    Comando irreversível — confirmar no frontend antes de chamar.
+    """
+    device = await service.get_device(device_id)
+    if not device:
         raise HTTPException(status_code=404, detail="Device not found")
-        
-    await manager.send_command_to_device(device_id, {"command": "wipe_device"})
-    return {"status": "command_sent", "command": "wipe_device"}
+
+    from backend.api.command_dispatcher import dispatch_command
+    try:
+        result = await dispatch_command(
+            service, manager, device_id, "wipe_device",
+            issued_by=current_user.email,
+        )
+    except OverflowError as e:
+        raise HTTPException(status_code=429, detail=str(e))
+    return result
 
 
 @router.post("/devices/{device_id}/checkin", tags=["Dispositivos"])
@@ -373,6 +420,32 @@ async def get_failed_commands(
     failed = await service.repo.get_failed_commands(device_id)
     return [{"id": str(c.id), "command": c.command, "payload": c.payload, "error": c.error_message} for c in failed]
 
+
+
+@router.get("/commands", tags=["Auditoria"])
+async def get_commands_audit(
+    device_id: Optional[str] = None,
+    status: Optional[str] = None,
+    action: Optional[str] = None,
+    issued_by: Optional[str] = None,
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    service: MDMService = Depends(get_service),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Lista histórico de comandos para auditoria enterprise.
+    (Somente admins autenticados via JWT).
+    """
+    cmds = await service.repo.get_commands_audit(
+        device_id=device_id,
+        status=status,
+        action=action,
+        issued_by=issued_by,
+        limit=limit,
+        offset=offset
+    )
+    return cmds
 
 
 @router.get("/policies", response_model=List[Policy])

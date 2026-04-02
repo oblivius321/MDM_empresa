@@ -99,7 +99,7 @@ export default function Devices() {
             <Filter className="w-3.5 h-3.5 text-muted-foreground ml-1.5" />
             {STATUS_OPTIONS.map((opt) => (
               <button
-                key={opt.value}
+                key={`filter-status-${opt.value || 'all'}`}
                 onClick={() => handleStatusFilter(opt.value)}
                 className={cn(
                   'px-3 py-1 text-xs font-medium rounded transition-colors',
@@ -120,8 +120,8 @@ export default function Devices() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-border bg-muted/30">
-                  {['Nome', 'IMEI', 'Modelo', 'Android', 'Empresa', 'Status', 'Último Check-in', ''].map((h) => (
-                    <th key={h} className="px-5 py-3 text-left text-xs font-medium text-muted-foreground whitespace-nowrap">
+                  {['Nome', 'IMEI', 'Modelo', 'Android', 'Empresa', 'Status', 'Último Check-in', 'Ações'].map((h) => (
+                    <th key={`header-${h}`} className="px-5 py-3 text-left text-xs font-medium text-muted-foreground whitespace-nowrap">
                       {h}
                     </th>
                   ))}
@@ -130,9 +130,9 @@ export default function Devices() {
               <tbody>
                 {loading ? (
                   Array.from({ length: 8 }).map((_, i) => (
-                    <tr key={i} className="border-b border-border/50">
+                    <tr key={`row-skel-${i}`} className="border-b border-border/50">
                       {Array.from({ length: 8 }).map((_, j) => (
-                        <td key={j} className="px-5 py-3">
+                        <td key={`cell-skel-${i}-${j}`} className="px-5 py-3">
                           <div className="h-4 rounded skeleton-shimmer" style={{ width: `${60 + Math.random() * 40}%` }} />
                         </td>
                       ))}
@@ -146,7 +146,7 @@ export default function Devices() {
                   </tr>
                 ) : devices.map((device, idx) => (
                   <tr
-                    key={device.id}
+                    key={`device-${device.id}`}
                     className="border-b border-border/50 hover:bg-muted/20 transition-colors cursor-pointer"
                     style={{ animationDelay: `${idx * 30}ms` }}
                     onClick={() => navigate(`/devices/${device.id}`)}
@@ -210,7 +210,7 @@ export default function Devices() {
                 const pageNum = i + 1;
                 return (
                   <button
-                    key={pageNum}
+                    key={`page-${pageNum}`}
                     onClick={() => setPage(pageNum)}
                     className={cn(
                       'w-7 h-7 rounded-md text-xs font-medium transition-colors',
