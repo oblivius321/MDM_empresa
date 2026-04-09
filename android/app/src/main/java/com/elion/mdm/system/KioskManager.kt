@@ -60,15 +60,17 @@ class KioskManager(private val context: Context) {
         dpm.setKioskPackages(packages)
             .onFailure { Log.e(TAG, "Falha ao definir Lock Task packages: ${it.message}") }
 
-        // 3. Lock Task features (sistema limitado — apenas relógio/bateria + power menu)
-        dpm.setLockTaskFeatures(
-            DevicePolicyManager.LOCK_TASK_FEATURE_SYSTEM_INFO or
-            DevicePolicyManager.LOCK_TASK_FEATURE_GLOBAL_ACTIONS
-        ).onFailure { Log.e(TAG, "Falha ao definir Lock Task features: ${it.message}") }
+        // 3. Lock Task features (sistema 100% blindado: Nada de system_info, nada de global_actions)
+        dpm.setLockTaskFeatures(DevicePolicyManager.LOCK_TASK_FEATURE_NONE)
+            .onFailure { Log.e(TAG, "Falha ao definir Lock Task features (NONE): ${it.message}") }
 
         // 4. Restrições de usuário (lockdown completo)
         dpm.enableFullLockdown()
             .onFailure { Log.e(TAG, "Falha ao aplicar lockdown: ${it.message}") }
+
+        // 🛡️ MODO DEV: Limpar restrições que podem causar lockout físico
+        dpm.clearSafetyRestrictions()
+            .onFailure { Log.e(TAG, "Falha no cleanup de segurança: ${it.message}") }
 
         // 5. Status bar + keyguard
         dpm.setStatusBarDisabled(true)

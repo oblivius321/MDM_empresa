@@ -14,28 +14,35 @@ import com.elion.mdm.services.MDMForegroundService
  *   2. Em caso de sucesso, inicia o MDMForegroundService
  *   3. Aplica restrições iniciais de segurança via DevicePolicyHelper
  */
-class EnrollDeviceUseCase(private val context: Context) {
-
-    private val repository = DeviceRepository(context)
-    private val dpm        = DevicePolicyHelper(context)
-
-    suspend operator fun invoke(
+    suspend fun enroll(
         bootstrapSecret: String,
-        backendUrl: String
+        backendUrl: String,
+        profileId: String? = null
     ): Result<EnrollmentResponse> {
-        val result = repository.enroll(bootstrapSecret, backendUrl)
+        // Transição inicial para a Máquina de Estados (Crash-Safe)
+        com.elion.mdm.system.MDMStateMachine.transitionTo(
+            context, 
+            com.elion.mdm.system.MDMState.REGISTERING,
+            metadata = mapOf("backend_url" to backendUrl, "profile_id" to (profileId ?: ""))
+        )
+
+        val result = repository.enroll(bootstrapSecret, backendUrl) 
 
         result.onSuccess {
-            // Inicia o serviço MDM imediatamente após enrollment
+            // Transição para Provisionamento (Busca SSOT)
+            com.elion.mdm.system.MDMStateMachine.transitionTo(
+                context,
+                com.elion.mdm.system.MDMState.PROVISIONING
+            )
+            
+            // Inicia o serviço MDM que orquestrará o resto do ciclo de vida
             MDMForegroundService.start(context)
-
-            // Aplica restrições de segurança base (best-effort — não falha o enrollment)
-            if (dpm.isDeviceOwner()) {
-                dpm.setFactoryResetDisabled(true)
-                    .onFailure { /* ignora — DO pode não estar ativo ainda */ }
-                dpm.setSafeModeDisabled(true)
-                    .onFailure { /* ignora */ }
-            }
+        }.onFailure {
+            com.elion.mdm.system.MDMStateMachine.transitionTo(
+                context,
+                com.elion.mdm.system.MDMState.ERROR,
+                error = "Enrollment falhou: ${it.message}"
+            )
         }
 
         return result

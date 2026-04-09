@@ -118,7 +118,28 @@ api.interceptors.response.use(
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+// ─── Types ──────────────────────────────────────────────────────────────────
+
 export type DeviceStatus = 'online' | 'offline' | 'locked' | 'syncing';
+
+export type ComplianceStatus = 
+  | 'compliant' 
+  | 'enforcing' 
+  | 'enforcing_partial' 
+  | 'failed_loop' 
+  | 'unknown';
+
+export interface PolicyState {
+  device_id: string;
+  compliance_status: ComplianceStatus;
+  last_reported_state: any;
+  failed_subcommands: string[];
+  last_enforced_at?: string;
+  drift_score?: number;
+  effective_policy_hash?: string;
+  state_hash?: string;
+  updated_at: string;
+}
 
 export interface Device {
   id: string;
@@ -131,8 +152,13 @@ export interface Device {
   last_checkin: string;
   company?: string;
   policies?: Policy[];
+  policies_v2?: PolicyV2[];
+  device_policies?: any[];
+  compliance_status?: ComplianceStatus;
+  compliance_state?: PolicyState;
+  merged_config?: any;
+  last_enforced_at?: string;
   events?: DeviceEvent[];
-  compliance_status?: 'compliant' | 'non_compliant' | 'unknown';
 }
 
 export interface Policy {
@@ -145,6 +171,18 @@ export interface Policy {
   install_unknown_sources?: boolean;
   factory_reset_disabled?: boolean;
   kiosk_mode?: string | null;
+}
+
+export interface PolicyV2 {
+  id: number;
+  name: string;
+  config: any;
+  priority: number;
+  scope: 'global' | 'group' | 'device';
+  version: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface DeviceEvent {
@@ -227,20 +265,39 @@ export const deviceService = {
     api.post(`/devices/${id}/wipe`),
 };
 
-// ─── Policy Endpoints ─────────────────────────────────────────────────────────
+// ─── Policy V2 Endpoints (Enterprise) ────────────────────────────────────────
 
-export const policyService = {
-  getAll: () =>
-    api.get('/policies'),
+export const policyV2Service = {
+  getAll: (params?: { scope?: string; is_active?: boolean }) =>
+    api.get<PolicyV2[]>('/policies/v2', { params }),
 
-  create: (data: Partial<Policy>) =>
-    api.post('/policies', data),
+  create: (data: Partial<PolicyV2>) =>
+    api.post<PolicyV2>('/policies/v2', data),
 
-  getById: (id: string) =>
-    api.get(`/policies/${id}`),
+  getById: (id: number) =>
+    api.get<PolicyV2>(`/policies/v2/${id}`),
 
-  apply: (deviceId: string, policyData: Partial<Policy>) =>
-    api.post(`/devices/${deviceId}/policies`, policyData),
+  update: (id: number, data: Partial<PolicyV2>) =>
+    api.put<PolicyV2>(`/policies/v2/${id}`, data),
+
+  delete: (id: number) =>
+    api.delete(`/policies/v2/${id}`),
+
+  assignToDevice: (deviceId: string, policyId: number) =>
+    api.post(`/devices/${deviceId}/policies/v2`, { policy_id: policyId }),
+
+  removeFromDevice: (deviceId: string, policyId: number) =>
+    api.delete(`/devices/${deviceId}/policies/v2/${policyId}`),
+};
+
+// ─── Compliance Endpoints ───────────────────────────────────────────────────
+
+export const complianceService = {
+  getDeviceCompliance: (deviceId: string) =>
+    api.get<any>(`/devices/${deviceId}/compliance`),
+
+  reportState: (deviceId: string, state: any) =>
+    api.post(`/devices/${deviceId}/state-report`, { ...state }),
 };
 
 // ─── Log Endpoints ────────────────────────────────────────────────────────────

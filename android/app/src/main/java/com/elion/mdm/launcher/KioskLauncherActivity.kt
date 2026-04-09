@@ -11,6 +11,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import androidx.activity.OnBackPressedCallback
 import com.elion.mdm.R
 import com.elion.mdm.admin.AdminLoginActivity
 import com.elion.mdm.data.local.SecurePreferences
@@ -68,12 +69,38 @@ class KioskLauncherActivity : AppCompatActivity() {
         setupMenu()
         loadApps()
         enterKioskIfNeeded()
+
+        // 🛡️ Nível Enterprise Kiosk UI - Força fullscreen real
+        enforceFullscreen()
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (prefs.isKioskEnabled) {
+                    Log.d(TAG, "Back bloqueado em modo kiosk")
+                } else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                    isEnabled = true
+                }
+            }
+        })
+    }
+
+    private fun enforceFullscreen() {
+        if (prefs.isKioskEnabled || dpm.isInLockTaskMode()) {
+            window.decorView.systemUiVisibility = (
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_FULLSCREEN
+            )
+        }
     }
 
     override fun onResume() {
         super.onResume()
         loadApps()  // Refresh on resume
         enterKioskIfNeeded()
+        enforceFullscreen() // Garante que popups ou sub-telas do S.O não quebrem a flag
         securityManager.startWatchdog()
     }
 
@@ -90,15 +117,6 @@ class KioskLauncherActivity : AppCompatActivity() {
         securityManager.destroy()
     }
 
-    @Deprecated("Deprecated in API level 33")
-    override fun onBackPressed() {
-        // Bloquear Back em modo kiosk
-        if (prefs.isKioskEnabled) {
-            Log.d(TAG, "Back bloqueado em modo kiosk")
-            return
-        }
-        super.onBackPressed()
-    }
 
     // ─── Views ────────────────────────────────────────────────────────────────
 

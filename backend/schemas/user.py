@@ -1,7 +1,8 @@
-from pydantic import BaseModel, EmailStr, ConfigDict, Field
-from typing import Optional, List
-from datetime import datetime
 from enum import Enum
+import uuid
+from typing import List, Optional
+from datetime import datetime
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from backend.core.constants import SecurityQuestion
 
 class UserLogin(BaseModel):
@@ -95,11 +96,12 @@ class PasswordResetToken(BaseModel):
 # ============= Enroll Seguro (com Bootstrap Secret) =============
 
 class DeviceEnrollRequest(BaseModel):
-    """Request para enroll seguro de dispositivo"""
+    """Request para enroll seguro de dispositivo com Profile obrigatório."""
     device_id: str = Field(..., min_length=1, max_length=255)
     name: str = Field(..., min_length=1, max_length=255)
     device_type: str = Field(..., min_length=1, max_length=50)
     bootstrap_secret: str  # Secret compartilhado para validar enroll
+    profile_id: uuid.UUID # Perfil de provisionamento obrigatório (QR Code)
     extra_data: Optional[dict] = None
 
 class DeviceEnrollResponse(BaseModel):

@@ -1,44 +1,44 @@
 from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Index
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime
 from backend.core.database import Base
+from typing import List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from backend.models.role import Role
+
 
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=False)
-    security_question = Column(String, nullable=True)
-    security_answer_hash = Column(String, nullable=True)
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    email: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String, nullable=False)
+    security_question: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    security_answer_hash: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     
     # ============= CAMPOS DE RBAC =============
-    # Campo legado: será descontinuado quando RBAC estiver completo
-    # Para compatibilidade, SUPER_ADMIN terá is_admin=True
-    is_admin = Column(Boolean, default=False)
-    is_active = Column(Boolean, default=True, index=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     
     # Auditoria
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # ============= CAMPOS DE SEGURANÇA - PASSWORD RECOVERY =============
-    # JTI (JWT ID) do token de reset em vigência (garante one-time token)
-    password_reset_jti = Column(String, nullable=True, default=None)
-    # Quando o JTI expira
-    password_reset_jti_expires = Column(DateTime, nullable=True, default=None)
-    # Quando a resposta de segurança foi verificada (para validar janela de tempo)
-    password_reset_answer_verified_at = Column(DateTime, nullable=True, default=None)
+    password_reset_jti: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    password_reset_jti_expires: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None)
+    password_reset_answer_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None)
     
     # ============= RELACIONAMENTOS =============
     # M:N com Roles através de user_roles
-    # IMPORTANTE: Especificar foreign_keys para evitar ambiguidade com assigned_by_user_id
-    roles = relationship(
+    roles: Mapped[List["Role"]] = relationship(
         "Role",
         secondary="user_roles",
         back_populates="users",
         lazy="selectin",
-        foreign_keys="[user_roles.c.user_id, user_roles.c.role_id]",
+        primaryjoin="User.id == user_roles.c.user_id",
+        secondaryjoin="Role.id == user_roles.c.role_id",
         doc="Roles atribuídas ao usuário"
     )
     
@@ -53,8 +53,6 @@ class User(Base):
         """
         Propriedade computed que retorna um set de todas as permissões
         do usuário, agregadas de todos os seus roles.
-        
-        Retorna: Set[str] - Ex: {"devices:read", "devices:lock", "users:manage"}
         """
         permissions = set()
         if self.roles:
@@ -83,3 +81,6 @@ class User(Base):
     def has_all_permissions(self, *permission_names) -> bool:
         """Verifica se tem TODAS as permissões listadas"""
         return all(perm in self.all_permissions for perm in permission_names)
+
+    def __repr__(self):
+        return f"<User(email='{self.email}', is_admin={self.is_admin})>"

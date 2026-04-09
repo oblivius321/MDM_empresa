@@ -93,11 +93,5 @@
             android:exported="false"
             android:foregroundServiceType="connectedDevice"/>
 
-        <!-- ─── APK Installer Service ─────────────────────────────── -->
-        <service
-            android:name=".services.ApkInstallerService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync"/>
-
     </application>
 </manifest>

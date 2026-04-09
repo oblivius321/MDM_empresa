@@ -1,69 +1,7 @@
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import List, Optional, Dict
 from datetime import datetime
-
-
-class PolicyBase(BaseModel):
-    name: str = "Default Policy"
-    type: str = "security"
-    
-    camera_disabled: bool = False
-    install_unknown_sources: bool = False
-    factory_reset_disabled: bool = False
-    kiosk_mode: Optional[str] = None
-    
-    policy_data: Dict = {}
-
-
-class PolicyCreate(PolicyBase):
-    pass
-
-
-class Policy(BaseModel):
-    id: str
-    name: str
-    type: str
-    status: Optional[str] = "applied"
-    
-    camera_disabled: bool = False
-    install_unknown_sources: bool = False
-    factory_reset_disabled: bool = False
-    kiosk_mode: Optional[str] = None
-
-    applied_at: Optional[datetime] = Field(None, alias="created_at")
-    
-    @field_validator('id', mode='before')
-    def int_to_str(cls, v):
-        return str(v)
-    
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
-
-
-class CommandResponse(BaseModel):
-    id: str
-    command: str
-    payload: Optional[Dict] = None
-    
-    @field_validator('id', mode='before')
-    def int_to_str(cls, v):
-        return str(v)
-    
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
-
-
-class LogResponse(BaseModel):
-    id: str
-    device_id: Optional[str] = None
-    type: str
-    message: str
-    severity: str
-    timestamp: datetime
-    
-    @field_validator('id', mode='before')
-    def int_to_str(cls, v):
-        return str(v)
-    
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+from backend.schemas.policy import DevicePolicyResponse, DeviceCommandResponse
 
 
 class DeviceBase(BaseModel):
@@ -82,26 +20,51 @@ class DeviceCreate(DeviceBase):
 
 
 class DeviceUpdate(BaseModel):
+    """Campos permitidos para atualização via API de checkin ou painel."""
     name: Optional[str] = None
     status: Optional[str] = None
     imei: Optional[str] = None
     model: Optional[str] = None
     android_version: Optional[str] = None
     last_checkin: Optional[datetime] = None
+    metadata_json: Optional[Dict] = None
 
 
 class DeviceResponse(DeviceBase):
+    """Resposta padrão de dispositivo para listagem e dashboard."""
     id: str = Field(..., alias="device_id")
     device_id: str
     enrollment_date: datetime
     last_checkin: Optional[datetime] = None
-    policies: List[Policy] = []
     
-    model_config = ConfigDict(
-        from_attributes=True,
-        populate_by_name=True
-    )
+    # Vínculo com a política materializada (SaaS Architecture)
+    device_policy: Optional[DevicePolicyResponse] = None
+    
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
-class EnrollmentResponse(DeviceResponse):
+
+class DeviceFullResponse(DeviceResponse):
+    """Resposta detalhada incluindo fila de comandos (Admin/Debug)."""
+    commands: List[DeviceCommandResponse] = []
+    
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+
+class EnrollmentResponse(BaseModel):
+    """Resposta do handshake inicial de enrollment — Foco em Identidade."""
+    message: str
+    device_id: str
     device_token: str
+    api_url: str
+    enrollment_status: str = "success"
+    # O device deve chamar /bootstrap logo após receber este OK
 
+# ============= 🛡️ CAMADA EX: TRUST & ATTESTATION (Fase 4) =============
+
+class NonceResponse(BaseModel):
+    nonce: str
+    expires_in: int = 300
+
+class AttestationRequest(BaseModel):
+    integrity_token: str
+    nonce: str

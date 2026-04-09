@@ -92,3 +92,39 @@ object CommandType {
     const val REBOOT             = "REBOOT"
     const val SYNC_POLICY        = "SYNC_POLICY"
 }
+
+// ─── State Report ─────────────────────────────────────────────────────────────
+
+data class StateReportRequest(
+    @SerializedName("health")           val health: String,
+    @SerializedName("reason_code")      val reasonCode: String? = null,
+    @SerializedName("policy_hash")      val policyHash: String,
+    @SerializedName("applied_policies") val appliedPolicies: List<String> = emptyList(),
+    @SerializedName("failed_policies")  val failedPolicies: List<String> = emptyList(),
+    @SerializedName("timestamp")        val timestamp: String? = null
+)
+
+// ─── Bootstrap (SSOT) ─────────────────────────────────────────────────────────
+
+data class BootstrapResponse(
+    @SerializedName("device_id")        val deviceId: String,
+    @SerializedName("policy_version")   val policyVersion: Int,
+    @SerializedName("policy_hash")      val policyHash: String,
+    @SerializedName("config")           val config: Map<String, Any>,
+    @SerializedName("kiosk_enabled")    val kioskEnabled: Boolean,
+    @SerializedName("allowed_apps")     val allowedApps: List<String>,
+    @SerializedName("blocked_features") val blockedFeatures: Map<String, Any>,
+    @SerializedName("pending_commands") val pendingCommands: List<DeviceCommand> = emptyList()
+)
+
+// ─── Trust & Attestation (Phase 4) ────────────────────────────────────────────
+
+data class NonceResponse(
+    @SerializedName("nonce")      val nonce: String,
+    @SerializedName("expires_in") val expiresIn: Int
+)
+
+data class AttestationRequest(
+    @SerializedName("integrity_token") val integrityToken: String,
+    @SerializedName("nonce")           val nonce: String
+)

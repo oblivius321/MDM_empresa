@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { buildWebSocketUrl } from '../services/api';
+import { useMDMStore } from '../store/useMDMStore';
 
 type PresenceEvent = { device_id: string; status: 'online' | 'offline' };
 
@@ -16,21 +17,26 @@ type CommandEvent = {
 /**
  * useMDMWebSocket
  *
- * @param onDeviceChange   Callback chamado em qualquer evento (força refresh da lista)
- * @param onPresenceChange Callback com payload { device_id, status } em eventos de
- *                         conexão/desconexão. Atualiza o badge LOCALMENTE sem roundtrip.
- * @param onCommandEvent   Callback com payload de evento de comando (CMD_SENT, CMD_ACKED,
- *                         CMD_COMPLETED, CMD_FAILED). Atualiza o status do comando na UI
- *                         sem nova requisição à API.
+ * @param onDeviceChange   Callback opcional (fallback para retrocompatibilidade)
+ * @param onPresenceChange Callback opcional
+ * @param onCommandEvent   Callback opcional
  */
 export function useMDMWebSocket(
-  onDeviceChange: () => void,
+  onDeviceChange?: () => void,
   onPresenceChange?: (event: PresenceEvent) => void,
   onCommandEvent?: (event: CommandEvent) => void,
 ) {
   const [isConnected, setIsConnected] = useState(false);
   const ws = useRef<WebSocket | null>(null);
   const { isAuthenticated } = useAuth();
+  
+  // ─── Zustand Store Selectors ──────────────────────────────────────────────
+  const { 
+    handleDeviceConnected, 
+    handleDeviceDisconnected, 
+    handleComplianceUpdate,
+    handleCommandResult 
+  } = useMDMStore();
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -52,7 +58,6 @@ export function useMDMWebSocket(
 
       ws.current.onmessage = (event) => {
         try {
-          // Trata strings simples (ping/pong do server)
           if (typeof event.data === 'string' && !event.data.startsWith('{')) {
             if (event.data === 'ping') ws.current?.send('pong');
             return;
@@ -61,44 +66,42 @@ export function useMDMWebSocket(
           const data = JSON.parse(event.data);
 
           switch (data.type) {
-            // ─── Presença: Atualiza badge localmente sem nova requisição GET ──
-            // O backend envia { device_id, status } diretamente no payload.
-            case 'DEVICE_CONNECTED':
-            case 'DEVICE_DISCONNECTED': {
-              if (onPresenceChange && data.device_id && data.status) {
-                onPresenceChange({
-                  device_id: data.device_id,
-                  status: data.status as 'online' | 'offline',
-                });
-              }
-              // fallback: também força refresh completo da lista
-              onDeviceChange();
+            case 'DEVICE_CONNECTED': {
+              handleDeviceConnected(data.device_id);
+              if (onPresenceChange) onPresenceChange(data);
+              if (onDeviceChange) onDeviceChange();
               break;
             }
 
-            // ─── Eventos que requerem refresh de lista ────────────────────────
-            case 'DEVICE_CHECKIN':
-            case 'DEVICE_ENROLLED':
-            case 'DEVICE_EVENT':
-              onDeviceChange();
+            case 'DEVICE_DISCONNECTED': {
+              handleDeviceDisconnected(data.device_id);
+              if (onPresenceChange) onPresenceChange(data);
+              if (onDeviceChange) onDeviceChange();
               break;
+            }
 
-            // ─── Eventos de Comando (tempo real, sem roundtrip GET) ───────────
-            // O backend emite CMD_SENT/ACKED/COMPLETED/FAILED com payload completo.
-            // onCommandEvent atualiza o indicador de status na UI diretamente.
+            case 'COMPLIANCE_UPDATE': {
+              handleComplianceUpdate(data.device_id, data.status, {
+                compliant: data.compliant
+              });
+              break;
+            }
+
             case 'CMD_SENT':
             case 'CMD_ACKED':
             case 'CMD_COMPLETED':
             case 'CMD_FAILED': {
-              if (onCommandEvent && data.command_id != null) {
-                onCommandEvent(data as CommandEvent);
-              }
+              handleCommandResult(data.device_id, data.action, data.type === 'CMD_COMPLETED');
+              if (onCommandEvent) onCommandEvent(data as CommandEvent);
               break;
             }
 
-            // ─── Heartbeat Bidirecional: Backend → Dashboard ──────────────────
-            // Backend envia server_ping para detectar NAT timeout / conexão travada.
-            // Dashboard responde com pong.
+            case 'DEVICE_CHECKIN':
+            case 'DEVICE_ENROLLED':
+            case 'DEVICE_EVENT':
+              if (onDeviceChange) onDeviceChange();
+              break;
+
             case 'server_ping':
               ws.current?.send(JSON.stringify({ type: 'pong' }));
               break;
@@ -112,12 +115,7 @@ export function useMDMWebSocket(
       };
 
       ws.current.onclose = (event) => {
-        // 4002 = auth_failed → não faz sentido tentar reconectar
-        if (event.code === 4002) {
-          console.error('❌ WebSocket: autenticação negada (4002). Não tentará reconectar.');
-          return;
-        }
-        console.warn(`⚠️ Radar desconectado. Próxima tentativa em ${currentDelay / 1000}s...`);
+        if (event.code === 4002) return;
         setIsConnected(false);
         retryTimeout = setTimeout(() => {
           connect();

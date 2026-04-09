@@ -42,7 +42,10 @@ class MDMForegroundService : Service() {
         private const val WS_RECONNECT_MS  = 10_000L  // 10 segundos entre tentativas de reconexão
 
         fun start(context: Context) {
-            context.startForegroundService(Intent(context, MDMForegroundService::class.java))
+            androidx.core.content.ContextCompat.startForegroundService(
+                context, 
+                Intent(context, MDMForegroundService::class.java)
+            )
         }
 
         fun stop(context: Context) {
@@ -50,41 +53,165 @@ class MDMForegroundService : Service() {
         }
     }
 
-    private val serviceScope    = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val exceptionHandler = kotlinx.coroutines.CoroutineExceptionHandler { _, exception ->
+        android.util.Log.e(TAG, "Crash evitado na ForegroundService: ${exception.message}")
+        com.elion.mdm.system.LocalLogger.log(this, "CRASH_PREVENTED", exception.message ?: "Unknown error")
+    }
+    private val serviceScope    = CoroutineScope(Dispatchers.IO + SupervisorJob() + exceptionHandler)
     private lateinit var prefs  : SecurePreferences
-    private lateinit var cmdHandler: CommandHandler
-    private lateinit var dpm    : DevicePolicyHelper
+    private lateinit var cmdHandler: com.elion.mdm.domain.CommandHandler
+    private lateinit var dpmHelper: DevicePolicyHelper
+    private lateinit var policyManager: com.elion.mdm.domain.PolicyManager
+    private lateinit var repository: com.elion.mdm.data.repository.DeviceRepository
+    private lateinit var attestationService: com.elion.mdm.security.AttestationService
 
     private var checkinJob      : Job? = null
     private var commandPollJob  : Job? = null
     private var wsReconnectJob  : Job? = null
+    private var kioskWatchdogJob: Job? = null
     private var webSocket       : WebSocket? = null
+    private var isWsConnected   = false
 
     // ─── Lifecycle ────────────────────────────────────────────────────────────
 
     override fun onCreate() {
         super.onCreate()
-        prefs      = SecurePreferences(this)
-        cmdHandler = CommandHandler(this)
-        dpm        = DevicePolicyHelper(this)
+        prefs = SecurePreferences(this)
+        cmdHandler = com.elion.mdm.domain.CommandHandler(this)
+        dpmHelper = DevicePolicyHelper(this)
+        repository = com.elion.mdm.data.repository.DeviceRepository(this)
+        attestationService = com.elion.mdm.security.AttestationService(this, com.elion.mdm.data.remote.ApiClient.getInstance(this))
+        
+        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as android.app.admin.DevicePolicyManager
+        val admin = com.elion.mdm.AdminReceiver.getComponentName(this)
+        policyManager = com.elion.mdm.domain.PolicyManager(this, dpm, admin)
+
+        com.elion.mdm.system.OfflineQueue.init(this)
+        com.elion.mdm.system.LocalLogger.init(this)
 
         createNotificationChannel()
-        startForeground(NOTIF_ID, buildNotification("Agente MDM ativo"))
-        Log.i(TAG, "MDMForegroundService criado")
+        startForeground(NOTIF_ID, buildNotification("Serviço em execução..."))
+        Log.i(TAG, "MDMForegroundService criado — Modo Enterprise 3B")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i(TAG, "onStartCommand")
 
         if (prefs.hasValidToken()) {
-            startCheckinLoop()
-            startCommandPollLoop()
+            startMDMEngine()
             connectWebSocket()
         } else {
             Log.w(TAG, "Dispositivo não enrollado — aguardando enrollment")
         }
 
-        return START_STICKY  // reinicia automaticamente se o sistema matar o processo
+        return START_STICKY
+    }
+
+    private fun startMDMEngine() {
+        serviceScope.launch {
+            while (isActive) {
+                val stateInfo = com.elion.mdm.system.MDMStateMachine.getStateInfo(this@MDMForegroundService)
+                
+                if (stateInfo.isInCooldown()) {
+                    Log.d(TAG, "Engine em COOLDOWN... aguardando.")
+                    delay(30_000)
+                    continue
+                }
+
+                when (stateInfo.state) {
+                    com.elion.mdm.system.MDMState.INIT -> {
+                        // Aguarda enrollment via UI (Phase 3A automatismo seria disparado aqui)
+                        delay(10_000)
+                    }
+                    com.elion.mdm.system.MDMState.REGISTERING -> {
+                        // Enrollment em curso
+                        delay(2000)
+                    }
+                    com.elion.mdm.system.MDMState.PROVISIONING -> {
+                        runBootstrap()
+                    }
+                    com.elion.mdm.system.MDMState.ENFORCING -> {
+                        runEnforcement()
+                    }
+                    com.elion.mdm.system.MDMState.OPERATIONAL -> {
+                        // Loop normal de manutenção
+                        performCheckin()
+                        
+                        // ✅ NOVO (Fase 4): Atestação de Hardware Periódica
+                        // Executa apenas se não houver atestação recente ou se solicitado pelo backend
+                        attestationService.performAttestation().onFailure {
+                             Log.w(TAG, "Atestação de hardware falhou (vulnerabilidade potencial): ${it.message}")
+                        }
+
+                        startKioskWatchdogLoop() // Reaproveita o watchdog
+                        delay(prefs.checkinIntervalSeconds * 1000L)
+                    }
+                    com.elion.mdm.system.MDMState.ERROR -> {
+                        Log.e(TAG, "Estado de ERRO detectado: ${stateInfo.lastError}")
+                        // Se falhou muitas vezes, o transitionTo já cuidou do cooldown
+                        delay(60_000)
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun runBootstrap() {
+        Log.i(TAG, "Iniciando PROVISIONING (Handshake SSOT)")
+        repository.bootstrapData().onSuccess { bootstrap ->
+            // Salva dados locais da política (será usado pelo ComplianceManager/PolicyManager)
+            // Transição para aplicação
+            com.elion.mdm.system.MDMStateMachine.transitionTo(
+                this, 
+                com.elion.mdm.system.MDMState.ENFORCING,
+                metadata = mapOf("policy_hash" to bootstrap.policyHash)
+            )
+        }.onFailure {
+            com.elion.mdm.system.MDMStateMachine.transitionTo(
+                this, 
+                com.elion.mdm.system.MDMState.ERROR, 
+                error = "Bootstrap falhou: ${it.message}"
+            )
+        }
+    }
+
+    private suspend fun runEnforcement() {
+        Log.i(TAG, "Iniciando ENFORCING (Ordem Determinística)")
+        val bootstrapResult = repository.bootstrapData() // Recupera SSOT novamente para garantir atomicidade
+        
+        bootstrapResult.onSuccess { bootstrap ->
+            val failedSteps = policyManager.applyFullPolicy(bootstrap)
+            
+            if (failedSteps.isEmpty()) {
+                Log.i(TAG, "Conformidade Total Atingida!")
+                com.elion.mdm.system.MDMStateMachine.transitionTo(this, com.elion.mdm.system.MDMState.OPERATIONAL)
+                repository.reportStatus(com.elion.mdm.data.remote.dto.DeviceHealth.COMPLIANT, "INITIAL_ENFORCE", bootstrap.policyHash)
+            } else {
+                Log.e(TAG, "Falha parcial no enforcement: $failedSteps")
+                com.elion.mdm.system.MDMStateMachine.transitionTo(this, com.elion.mdm.system.MDMState.ERROR, error = "Steps failed: $failedSteps")
+                repository.reportStatus(
+                    com.elion.mdm.data.remote.dto.DeviceHealth.DEGRADED, 
+                    "PARTIAL_FAILURE: $failedSteps", 
+                    bootstrap.policyHash,
+                    failedPolicies = failedSteps
+                )
+            }
+        }.onFailure {
+             com.elion.mdm.system.MDMStateMachine.transitionTo(this, com.elion.mdm.system.MDMState.ERROR, error = it.message)
+        }
+    }
+
+    private fun startKioskWatchdogLoop() {
+        kioskWatchdogJob?.cancel()
+        kioskWatchdogJob = serviceScope.launch {
+            while (isActive) {
+                if (prefs.isKioskEnabled && !dpm.isInLockTaskMode()) {
+                    Log.e(TAG, "🔥 CENTRAL WATCHDOG: Modo Kiosk Corrompido/Desligado detectado! Forçando reentrada Imediata.")
+                    com.elion.mdm.launcher.KioskLauncherActivity.launch(this@MDMForegroundService)
+                }
+                delay(15_000) // Verificação constante a cada 15 segundos
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -142,9 +269,17 @@ class MDMForegroundService : Service() {
         commandPollJob?.cancel()
         commandPollJob = serviceScope.launch {
             while (isActive) {
-                runCatching { fetchAndExecuteCommands() }
-                    .onFailure { Log.e(TAG, "Command poll falhou: ${it.message}") }
-                delay(30_000) // poll a cada 30s como fallback ao WebSocket
+                if (System.currentTimeMillis() < circuitBreakerCooldownUntil) {
+                     Log.w(TAG, "Circuit Breaker OPEN. Pulando HTTP polling c/ backend.")
+                     delay(30_000)
+                     continue
+                }
+
+                if (!isWsConnected) {
+                    runCatching { fetchAndExecuteCommands() }
+                        .onFailure { Log.e(TAG, "Command poll falhou: ${it.message}") }
+                }
+                delay(30_000) // poll a cada 30s APENAS como fallback ao WebSocket
             }
         }
     }
@@ -182,34 +317,84 @@ class MDMForegroundService : Service() {
 
             override fun onOpen(ws: WebSocket, response: Response) {
                 Log.i(TAG, "WebSocket CONECTADO")
+                isWsConnected = true
+                consecutiveFailures = 0 // CIRCUIT BREAKER RESET
+                prefs.lastWsConnectedAt = System.currentTimeMillis()
+                prefs.wsReconnectCount = 0
                 wsReconnectJob?.cancel()
+
+                serviceScope.launch {
+                    kotlinx.coroutines.delay(500) // Delay tático antes do flush
+                    com.elion.mdm.system.OfflineQueue.flushNetwork(this@MDMForegroundService)
+                }
             }
 
             override fun onMessage(ws: WebSocket, text: String) {
                 Log.d(TAG, "WebSocket mensagem: $text")
-                // Trigger imediato de busca de comandos ao receber qualquer mensagem
                 serviceScope.launch {
-                    runCatching { fetchAndExecuteCommands() }
-                        .onFailure { Log.e(TAG, "WS trigger falhou: ${it.message}") }
+                    runCatching {
+                        // Tenta dar parse direto na mensagem como um DeviceCommand
+                        val gson = com.google.gson.Gson()
+                        val command = gson.fromJson(text, com.elion.mdm.data.remote.dto.DeviceCommand::class.java)
+                        
+                        if (command != null && command.id != 0L && command.type.isNotEmpty()) {
+                            Log.i(TAG, "Comando WS parseado com sucesso: #${command.id} do tipo ${command.type}")
+                            cmdHandler.processCommands(listOf(command))
+                        } else {
+                            // Se for apenas um 'ping' genérico, cai de volta para buscar os comandos
+                            Log.d(TAG, "Mensagem WS não é um comando válido, disparando fetch de comandos pendentes...")
+                            fetchAndExecuteCommands()
+                        }
+                    }.onFailure { 
+                        Log.e(TAG, "Falha ao processar mensagem do WS (${it.message}), disparando fetch...")
+                        fetchAndExecuteCommands()
+                    }
                 }
             }
 
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
                 Log.w(TAG, "WebSocket FALHA: ${t.message} — reconectando em ${WS_RECONNECT_MS}ms")
+                isWsConnected = false
+                prefs.wsReconnectCount += 1
+                prefs.lastErrorCode = t.message
                 scheduleWsReconnect()
             }
 
             override fun onClosed(ws: WebSocket, code: Int, reason: String) {
                 Log.w(TAG, "WebSocket FECHADO ($code: $reason) — reconectando...")
+                isWsConnected = false
                 scheduleWsReconnect()
             }
         })
     }
 
+    private var consecutiveFailures = 0
+    private var circuitBreakerCooldownUntil = 0L
+
     private fun scheduleWsReconnect() {
+        val now = System.currentTimeMillis()
+        if (now < circuitBreakerCooldownUntil) {
+            Log.w(TAG, "Circuit Breaker OPEN. Pulando reconexão até ${formatTime(circuitBreakerCooldownUntil)}.")
+            return
+        }
+
+        consecutiveFailures++
+        val baseDelay = WS_RECONNECT_MS
+        
+        // Backoff exponencial e Circuit Breaker
+        val delayMs = if (consecutiveFailures > 5) {
+            Log.e(TAG, "💥 CIRCUIT BREAKER OPEN (Failed $consecutiveFailures times). Pausa forçada de 5 minutos.")
+            circuitBreakerCooldownUntil = now + (5 * 60 * 1000) // 5 minutos freeze
+            5 * 60 * 1000L
+        } else {
+            // Exponential backoff com max = 60s
+            (baseDelay * Math.pow(2.0, consecutiveFailures.toDouble() - 1)).toLong().coerceAtMost(60_000L)
+        }
+        
         wsReconnectJob?.cancel()
         wsReconnectJob = serviceScope.launch {
-            delay(WS_RECONNECT_MS)
+            Log.w(TAG, "Agendando reconexão para daqui a ${delayMs / 1000}s (Tentativa: $consecutiveFailures)")
+            delay(delayMs)
             connectWebSocket()
         }
     }

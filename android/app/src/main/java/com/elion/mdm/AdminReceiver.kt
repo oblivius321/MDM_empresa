@@ -5,6 +5,10 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import com.elion.mdm.data.local.SecurePreferences
 import com.elion.mdm.services.MDMForegroundService
 
@@ -39,10 +43,45 @@ class AdminReceiver : DeviceAdminReceiver() {
         }
     }
 
+    @OptIn(DelicateCoroutinesApi::class)
     override fun onProfileProvisioningComplete(context: Context, intent: Intent) {
         super.onProfileProvisioningComplete(context, intent)
-        Log.i(TAG, "🚀 Provisionamento concluído — Iniciando MDM Service")
-        startMDMService(context)
+        Log.i(TAG, "🚀 Provisionamento Zero-Touch concluído — Lendo Bundle Extras")
+        
+        val pendingResult = goAsync()
+        GlobalScope.launch(Dispatchers.IO) {
+            try {
+                val bundle = intent.getParcelableExtra<android.os.PersistableBundle>(android.app.admin.DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE)
+                
+                val bootstrapToken = bundle?.getString("bootstrap_token") ?: ""
+                val apiUrl = bundle?.getString("api_url") ?: ""
+                val profileId = bundle?.getString("profile_id") ?: ""
+                
+                Log.d(TAG, "Provisioning Bundle Recebido -> token_presente=${bootstrapToken.isNotEmpty()}, api=$apiUrl, profile=$profileId")
+                
+                // Inicia o state machine blindado
+                com.elion.mdm.system.EnrollmentStateMachine.transitionTo(
+                    context, 
+                    com.elion.mdm.system.EnrollmentState.BOOTSTRAPPED,
+                    mapOf(
+                        "bootstrap_token" to bootstrapToken,
+                        "api_url" to apiUrl,
+                        "profile_id" to profileId
+                    )
+                )
+                
+                startMDMService(context)
+            } catch (e: Exception) {
+                Log.e(TAG, "Erro grave no Bootstrapping do QR: ${e.message}")
+                com.elion.mdm.system.EnrollmentStateMachine.transitionTo(
+                    context, 
+                    com.elion.mdm.system.EnrollmentState.ERROR_RECOVERY,
+                    mapOf("error" to "bootstrapping_failed", "details" to (e.message ?: ""))
+                )
+            } finally {
+                pendingResult.finish()
+            }
+        }
     }
 
     override fun onLockTaskModeEntering(context: Context, intent: Intent, pkg: String) {

@@ -6,11 +6,11 @@ import android.util.Log
 import kotlinx.coroutines.withContext
 import com.elion.mdm.data.local.SecurePreferences
 import com.elion.mdm.data.remote.ApiClient
-import com.elion.mdm.data.remote.dto.CommandCompleteRequest
 import com.elion.mdm.data.remote.dto.CommandType
 import com.elion.mdm.data.remote.dto.DeviceCommand
-import com.elion.mdm.services.ApkInstallerService
 import com.elion.mdm.system.KioskManager
+import com.elion.mdm.system.LocalLogger
+import com.elion.mdm.domain.utils.NetworkUtils
 import kotlinx.coroutines.Dispatchers
 
 /**
@@ -43,9 +43,34 @@ class CommandHandler(private val context: Context) {
 
     // ─── Dispatcher ───────────────────────────────────────────────────────────
 
-    private suspend fun executeCommand(command: DeviceCommand) = withContext(Dispatchers.IO) {
-        Log.i(TAG, "Executando #${command.id}: ${command.type}")
+    private val prefsKeys = "elion_executed_commands" // Chave raiz para simplificar
 
+    private fun isCommandExecuted(commandId: Long): Boolean {
+        val sharedPrefs = context.getSharedPreferences(prefsKeys, Context.MODE_PRIVATE)
+        return sharedPrefs.getBoolean(commandId.toString(), false)
+    }
+
+    private fun markCommandExecuted(commandId: Long) {
+        val sharedPrefs = context.getSharedPreferences(prefsKeys, Context.MODE_PRIVATE)
+        sharedPrefs.edit().putBoolean(commandId.toString(), true).apply()
+        // Opcional: Para evitar crescimento infinito, o ideal seria ter um TTL ou manter apenas os ultimos 100 ids
+    }
+
+    private suspend fun executeCommand(command: DeviceCommand) = withContext(Dispatchers.IO) {
+        if (isCommandExecuted(command.id)) {
+            Log.w(TAG, "Comando #${command.id} já foi executado. Ignorando para garantir idempotência.")
+            notifyBackend(command.id, "acknowledged", "Já executado anteriormente (idempotência)")
+            return@withContext
+        }
+
+        Log.i(TAG, "Recebido #${command.id}: ${command.type}. Enviando ACK...")
+        // 1. ACK Imediato
+        notifyBackend(command.id, "acknowledged", null)
+        
+        // 2. Marcar como executado
+        markCommandExecuted(command.id)
+
+        // 3. Execução Protegida
         val result = runCatching {
             when (command.type) {
                 CommandType.LOCK               -> handleLock()
@@ -63,7 +88,18 @@ class CommandHandler(private val context: Context) {
             }
         }
 
-        notifyBackend(command.id, result)
+        // 4. RESULT (Sucesso ou Falha)
+        if (result.isSuccess) {
+            notifyBackend(command.id, "success", null)
+            Log.i(TAG, "Comando #${command.id} concluído com SUCESSO")
+        } else {
+            val errorMsg = result.exceptionOrNull()?.message ?: "Erro desconhecido"
+            notifyBackend(command.id, "failed", errorMsg)
+            Log.e(TAG, "Comando #${command.id} FALHOU: $errorMsg")
+        }
+
+        // 5. State Report (Automatic after state change)
+        StateReporter(context).reportState()
     }
 
     // ─── Handlers ─────────────────────────────────────────────────────────────
@@ -117,11 +153,16 @@ class CommandHandler(private val context: Context) {
         val url = command.payload["url"]
             ?: error("Payload 'url' obrigatório para INSTALL_APK")
 
-        val intent = Intent(context, ApkInstallerService::class.java).apply {
-            putExtra(ApkInstallerService.EXTRA_APK_URL, url)
-        }
-        context.startForegroundService(intent)
-        Log.i(TAG, "INSTALL_APK enfileirado: $url")
+        val data = androidx.work.Data.Builder()
+            .putString(com.elion.mdm.workers.ApkInstallerWorker.KEY_APK_URL, url)
+            .build()
+            
+        val workRequest = androidx.work.OneTimeWorkRequestBuilder<com.elion.mdm.workers.ApkInstallerWorker>()
+            .setInputData(data)
+            .build()
+            
+        androidx.work.WorkManager.getInstance(context).enqueue(workRequest)
+        Log.i(TAG, "INSTALL_APK enfileirado no WorkManager: $url")
     }
 
     private fun handleReboot() {
@@ -155,28 +196,36 @@ class CommandHandler(private val context: Context) {
 
     // ─── Notificação ao backend ────────────────────────────────────────────────
 
-    private suspend fun notifyBackend(commandId: Long, result: Result<*>) {
-        val req = if (result.isSuccess) {
-            CommandCompleteRequest(status = "success")
-        } else {
-            CommandCompleteRequest(
-                status  = "failed",
-                message = result.exceptionOrNull()?.message ?: "Erro desconhecido"
-            )
-        }
-
+    private suspend fun notifyBackend(commandId: Long, status: String, message: String?) {
+        val req = com.elion.mdm.data.remote.dto.CommandCompleteRequest(status = status, message = message)
         val deviceId = prefs.deviceId ?: return
 
         runCatching {
-            api.updateCommandStatus(deviceId, commandId, req)
+            NetworkUtils.retryWithBackoff(times = 3) {
+                val response = api.updateCommandStatus(deviceId, commandId, req)
+                if (!response.isSuccessful) {
+                    throw Exception("HTTP ${response.code()}")
+                }
+            }
         }.onFailure {
-            Log.e(TAG, "Falha ao notificar backend para #$commandId: ${it.message}")
-        }
-
-        if (result.isFailure) {
-            Log.e(TAG, "Comando #$commandId FALHOU: ${result.exceptionOrNull()?.message}")
-        } else {
-            Log.i(TAG, "Comando #$commandId concluído com SUCESSO")
+            Log.e(TAG, "Falha ao notificar backend ($status) para #$commandId: ${it.message}")
+            LocalLogger.log(context, "${status.uppercase()}_FAILED", "Comando #$commandId: ${it.message}")
+            
+            // Fallback para Store & Forward Offline Queue
+            val gson = com.google.gson.Gson()
+            val payloadObj = gson.toJsonTree(req).asJsonObject
+            payloadObj.addProperty("command_id", commandId) // Injeta command_id para o parser futuro
+            
+            val qType = if (status == "success" || status == "failed") com.elion.mdm.system.OfflineQueue.TYPE_RESULT else com.elion.mdm.system.OfflineQueue.TYPE_ACK
+            val qPrio = if (qType == com.elion.mdm.system.OfflineQueue.TYPE_RESULT) com.elion.mdm.system.OfflineQueue.PRIO_RESULT else com.elion.mdm.system.OfflineQueue.PRIO_ACK
+            
+            com.elion.mdm.system.OfflineQueue.enqueue(context, com.elion.mdm.system.QueuedEvent(
+                type = qType,
+                priority = qPrio,
+                payload = payloadObj,
+                timestamp = System.currentTimeMillis(),
+                deviceId = deviceId
+            ))
         }
     }
 }

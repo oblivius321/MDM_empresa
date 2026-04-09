@@ -162,6 +162,17 @@ class DevicePolicyHelper(private val context: Context) {
     }
 
     /**
+     * Remove explicitamente as restrições que podem travar o desenvolvedor "fora" do aparelho.
+     * Útil durante a fase de desenvolvimento para garantir que botões de Hard Reset funcionem.
+     */
+    fun clearSafetyRestrictions(): Result<Unit> = runCatching {
+        check(checkDO("clearSafetyRestrictions")) { "Não é Device Owner" }
+        dpm.clearUserRestriction(admin, UserManager.DISALLOW_FACTORY_RESET)
+        dpm.clearUserRestriction(admin, UserManager.DISALLOW_SAFE_BOOT)
+        Log.i(TAG, "Restrições de segurança (Reset/SafeBoot) LIMPAS para modo DEV")
+    }
+
+    /**
      * Aplica TODAS as restrições de usuário para lockdown completo.
      * Impede: instalar/desinstalar apps, USB, modificar contas, adicionar usuários,
      * factory reset, safe mode, montar mídia física.
@@ -175,8 +186,9 @@ class DevicePolicyHelper(private val context: Context) {
             UserManager.DISALLOW_USB_FILE_TRANSFER,
             UserManager.DISALLOW_MODIFY_ACCOUNTS,
             UserManager.DISALLOW_ADD_USER,
-            UserManager.DISALLOW_FACTORY_RESET,
-            UserManager.DISALLOW_SAFE_BOOT,
+            // UserManager.DISALLOW_FACTORY_RESET,  // Removido para modo DEV
+            // UserManager.DISALLOW_SAFE_BOOT,     // Removido para modo DEV
+            UserManager.DISALLOW_DEBUGGING_FEATURES,
             UserManager.DISALLOW_MOUNT_PHYSICAL_MEDIA,
             UserManager.DISALLOW_CONFIG_MOBILE_NETWORKS,
         )
@@ -201,6 +213,7 @@ class DevicePolicyHelper(private val context: Context) {
             UserManager.DISALLOW_ADD_USER,
             UserManager.DISALLOW_FACTORY_RESET,
             UserManager.DISALLOW_SAFE_BOOT,
+            UserManager.DISALLOW_DEBUGGING_FEATURES,
             UserManager.DISALLOW_MOUNT_PHYSICAL_MEDIA,
             UserManager.DISALLOW_CONFIG_MOBILE_NETWORKS,
         )

@@ -50,6 +50,9 @@ class MainActivity : AppCompatActivity() {
 
         bindViews()
         observeState()
+        
+        // Handshake Enterprise 3B: Tenta enrollment automático se vier do QR Code
+        viewModel.checkAutoEnrollment()
 
         btnEnroll.setOnClickListener { onEnrollClicked() }
         btnRefresh.setOnClickListener { viewModel.refreshStatus() }

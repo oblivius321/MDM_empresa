@@ -2,8 +2,8 @@ import { useDashboard } from '@/hooks/useDashboard';
 import { useDevices } from '@/hooks/useDevices';
 import { TopBar } from '@/components/TopBar';
 import { StatusBadge } from '@/components/StatusBadge';
-import { Smartphone, Wifi, WifiOff, Lock, Clock, TrendingUp, AlertCircle } from 'lucide-react';
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid } from 'recharts';
+import { Smartphone, Wifi, WifiOff, Lock, Clock, TrendingUp, AlertCircle, ShieldCheck } from 'lucide-react';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { format, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Link } from 'react-router-dom';
@@ -28,13 +28,15 @@ export default function Dashboard() {
   const { summary, loading, error, refresh, lastRefreshed } = useDashboard();
   const { devices, loading: devLoading } = useDevices({ autoRefresh: true });
 
+  const compliantDevices = devices.filter(d => d.compliance_status === 'compliant').length;
+  const complianceRate = devices.length > 0 ? (compliantDevices / devices.length) * 100 : 0;
+
   const pieData = summary ? [
     { name: 'Online', value: summary.online, color: CHART_COLORS.online },
     { name: 'Offline', value: summary.offline, color: CHART_COLORS.offline },
     { name: 'Bloqueados', value: summary.locked, color: CHART_COLORS.locked },
   ].filter(d => d.value > 0) : [];
 
-  // Build recent checkins timeline from devices
   const recentCheckins = devices
     .filter(d => d.last_checkin)
     .sort((a, b) => (b.last_checkin > a.last_checkin ? 1 : -1))
@@ -42,7 +44,7 @@ export default function Dashboard() {
 
   const metricCards = [
     {
-      title: 'Total de Dispositivos',
+      title: 'Dispositivos na Frota',
       value: summary?.total ?? '—',
       icon: Smartphone,
       color: 'text-primary',
@@ -50,7 +52,16 @@ export default function Dashboard() {
       border: 'border-primary/20',
     },
     {
-      title: 'Online',
+      title: 'Conformidade da Frota',
+      value: `${complianceRate.toFixed(0)}%`,
+      icon: ShieldCheck,
+      color: complianceRate > 90 ? 'text-status-online' : 'text-amber-500',
+      bg: 'bg-primary/10',
+      border: 'border-primary/20',
+      isCompliance: true
+    },
+    {
+      title: 'Online Agora',
       value: summary?.online ?? '—',
       icon: Wifi,
       color: 'text-status-online',
@@ -58,15 +69,7 @@ export default function Dashboard() {
       border: 'border-status-online/20',
     },
     {
-      title: 'Offline',
-      value: summary?.offline ?? '—',
-      icon: WifiOff,
-      color: 'text-muted-foreground',
-      bg: 'bg-muted/50',
-      border: 'border-border',
-    },
-    {
-      title: 'Bloqueados',
+      title: 'Bloqueados/Wipe',
       value: summary?.locked ?? '—',
       icon: Lock,
       color: 'text-status-locked',
@@ -87,7 +90,6 @@ export default function Dashboard() {
       />
 
       <div className="p-6 space-y-6">
-        {/* Error */}
         {error && (
           <div className="flex items-center gap-3 px-4 py-3 rounded-md bg-status-locked/10 border border-status-locked/30 text-status-locked text-sm">
             <AlertCircle className="w-4 h-4 flex-shrink-0" />
@@ -95,22 +97,25 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Metric Cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {loading
             ? Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={`skeleton-metric-${i}`} />)
             : metricCards.map((card) => (
-                <div key={`card-${card.title}`} className={`metric-card border ${card.border}`}>
+                <div key={`card-${card.title}`} className={`metric-card border ${card.border} group hover:border-primary/40 transition-all`}>
                   <div className="flex items-center justify-between mb-3">
-                    <p className="text-xs font-medium text-muted-foreground">{card.title}</p>
-                    <div className={`w-8 h-8 rounded-md ${card.bg} flex items-center justify-center`}>
+                    <p className="text-xs font-bold text-muted-foreground uppercase tracking-tight">{card.title}</p>
+                    <div className={`w-8 h-8 rounded-md ${card.bg} flex items-center justify-center group-hover:scale-110 transition-transform`}>
                       <card.icon className={`w-4 h-4 ${card.color}`} />
                     </div>
                   </div>
                   <p className={`text-3xl font-bold tracking-tight ${card.color}`}>{card.value}</p>
-                  {summary && (
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {((Number(card.value) / summary.total) * 100).toFixed(0)}% do total
+                  {card.isCompliance ? (
+                    <p className="text-[10px] text-muted-foreground mt-1 font-medium italic">
+                      {compliantDevices} de {devices.length} em conformidade
+                    </p>
+                  ) : summary && (
+                    <p className="text-[10px] text-muted-foreground mt-1 font-medium">
+                      {((Number(card.value) / summary.total) * 100).toFixed(0)}% da base total
                     </p>
                   )}
                 </div>
@@ -118,7 +123,6 @@ export default function Dashboard() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Pie Chart */}
           <div className="card-glass p-5">
             <div className="flex items-center gap-2 mb-4">
               <TrendingUp className="w-4 h-4 text-primary" />
@@ -172,7 +176,6 @@ export default function Dashboard() {
             )}
           </div>
 
-          {/* Last Check-in */}
           <div className="card-glass p-5">
             <div className="flex items-center gap-2 mb-4">
               <Clock className="w-4 h-4 text-primary" />
@@ -192,7 +195,7 @@ export default function Dashboard() {
             )}
 
             <div className="mt-4 pt-4 border-t border-border">
-              <p className="text-xs font-medium text-muted-foreground mb-2">Dispositivos Recentes</p>
+              <p className="text-xs font-medium text-muted-foreground mb-2">Check-ins Recentes</p>
               <div className="space-y-2">
                 {devLoading ? (
                   Array.from({ length: 3 }).map((_, i) => (
@@ -200,7 +203,7 @@ export default function Dashboard() {
                   ))
                 ) : recentCheckins.slice(0, 3).map((device) => (
                   <div key={`recent-${device.id}`} className="flex items-center justify-between text-xs">
-                    <span className="text-foreground truncate max-w-[120px]">{device.name}</span>
+                    <span className="text-foreground truncate max-w-[120px] font-medium">{device.name}</span>
                     <StatusBadge status={device.status} showDot={false} />
                   </div>
                 ))}
@@ -208,27 +211,37 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Quick Stats */}
           <div className="card-glass p-5">
             <div className="flex items-center gap-2 mb-4">
-              <Smartphone className="w-4 h-4 text-primary" />
-              <h3 className="text-sm font-semibold text-foreground">Saúde da Frota</h3>
+              <ShieldCheck className="w-4 h-4 text-primary" />
+              <h3 className="text-sm font-semibold text-foreground">Saúde & Conformidade</h3>
             </div>
             {summary && (
               <div className="space-y-4">
+                <div key="stat-compliance">
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="text-muted-foreground font-bold uppercase tracking-tighter">Taxa de Conformidade</span>
+                    <span className="text-status-online font-bold">{complianceRate.toFixed(1)}%</span>
+                  </div>
+                  <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all duration-700 bg-status-online"
+                      style={{ width: `${complianceRate}%` }}
+                    />
+                  </div>
+                </div>
                 {[
-                  { label: 'Taxa Online', value: summary.total > 0 ? (summary.online / summary.total) * 100 : 0, color: 'bg-status-online' },
-                  { label: 'Taxa Offline', value: summary.total > 0 ? (summary.offline / summary.total) * 100 : 0, color: 'bg-muted-foreground' },
-                  { label: 'Taxa Bloqueados', value: summary.total > 0 ? (summary.locked / summary.total) * 100 : 0, color: 'bg-status-locked' },
+                  { label: 'Disponibilidade Online', value: summary.total > 0 ? (summary.online / summary.total) * 100 : 0, color: 'bg-primary' },
+                  { label: 'Segurança (Bloqueados)', value: summary.total > 0 ? (summary.locked / summary.total) * 100 : 0, color: 'bg-status-locked' },
                 ].map((stat) => (
                   <div key={`stat-${stat.label}`}>
                     <div className="flex justify-between text-xs mb-1">
                       <span className="text-muted-foreground">{stat.label}</span>
                       <span className="text-foreground font-medium">{stat.value.toFixed(1)}%</span>
                     </div>
-                    <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                    <div className="h-1 bg-muted/50 rounded-full overflow-hidden">
                       <div
-                        className={`h-full rounded-full transition-all duration-700 ${stat.color}`}
+                        className={`h-full rounded-full transition-all duration-500 ${stat.color}`}
                         style={{ width: `${stat.value}%` }}
                       />
                     </div>
@@ -238,25 +251,24 @@ export default function Dashboard() {
             )}
             <Link
               to="/devices"
-              className="mt-5 flex items-center justify-center w-full px-3 py-2 rounded-md bg-primary/10 text-primary border border-primary/20 text-xs font-medium hover:bg-primary/20 transition-colors"
+              className="mt-5 flex items-center justify-center w-full px-3 py-2.5 rounded-md bg-secondary text-foreground border border-border text-xs font-bold hover:bg-primary hover:text-white transition-all shadow-sm"
             >
-              Ver Todos os Dispositivos →
+              Monitorar Dispositivos →
             </Link>
           </div>
         </div>
 
-        {/* Recent Devices Table */}
-        <div className="card-glass overflow-hidden">
-          <div className="px-5 py-4 border-b border-border flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-foreground">Dispositivos Recentes</h3>
-            <Link to="/devices" className="text-xs text-primary hover:underline">Ver todos →</Link>
+        <div className="card-glass overflow-hidden border-border/40">
+          <div className="px-5 py-4 border-b border-border bg-muted/20 flex items-center justify-between">
+            <h3 className="text-sm font-bold text-foreground">Dispositivos Recentes</h3>
+            <Link to="/devices" className="text-xs text-primary hover:underline font-bold">Ver todos os {summary?.total} equipamentos</Link>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-border">
-                  {['Nome', 'IMEI', 'Empresa', 'Status', 'Último Check-in'].map((h) => (
-                    <th key={h} className="px-5 py-3 text-left text-xs font-medium text-muted-foreground">{h}</th>
+                <tr className="border-b border-border bg-muted/10">
+                  {['Nome', 'IMEI', 'Status', 'Saúde', 'Último Check-in'].map((h) => (
+                    <th key={h} className="px-5 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider">{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -273,24 +285,21 @@ export default function Dashboard() {
                   ))
                 ) : devices.slice(0, 5).map((device) => (
                   <tr key={device.id} className="border-b border-border/50 hover:bg-muted/30 transition-colors">
-                    <td className="px-5 py-3 text-sm font-medium text-foreground">{device.name}</td>
+                    <td className="px-5 py-3 text-sm font-bold text-foreground">{device.name}</td>
                     <td className="px-5 py-3 text-xs text-muted-foreground font-mono">{device.imei}</td>
-                    <td className="px-5 py-3 text-sm text-muted-foreground">{device.company || '—'}</td>
                     <td className="px-5 py-3"><StatusBadge status={device.status} /></td>
-                    <td className="px-5 py-3 text-xs text-muted-foreground">
+                    <td className="px-5 py-3">
+                       <span className={`text-[10px] font-bold uppercase ${device.compliance_status === 'compliant' ? 'text-status-online' : 'text-amber-500'}`}>
+                         {device.compliance_status || 'desconhecido'}
+                       </span>
+                    </td>
+                    <td className="px-5 py-3 text-xs text-muted-foreground font-medium">
                       {device.last_checkin
                         ? format(parseISO(device.last_checkin), 'dd/MM/yy HH:mm')
                         : '—'}
                     </td>
                   </tr>
                 ))}
-                {!devLoading && devices.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="px-5 py-8 text-center text-muted-foreground text-sm">
-                      Nenhum dispositivo encontrado. Verifique a conexão com a API.
-                    </td>
-                  </tr>
-                )}
               </tbody>
             </table>
           </div>

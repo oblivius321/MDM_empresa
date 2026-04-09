@@ -33,11 +33,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ─── Actions ──────────────────────────────────────────────────────────────
 
-    fun enroll(bootstrapSecret: String, backendUrl: String) {
+    fun enroll(bootstrapSecret: String, backendUrl: String, profileId: String? = null) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
 
-            enrollUseCase(bootstrapSecret, backendUrl)
+            enrollUseCase.enroll(bootstrapSecret, backendUrl, profileId)
                 .onSuccess {
                     _uiState.value = _uiState.value.copy(
                         isLoading    = false,
@@ -50,6 +50,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         errorMessage = err.message ?: "Erro desconhecido no enrollment"
                     )
                 }
+        }
+    }
+
+    /**
+     * Verifica se há metadados de bootstrapping pendentes (vidos do QR Code)
+     * e dispara o enrollment sem intervenção humana se possível.
+     */
+    fun checkAutoEnrollment() {
+        viewModelScope.launch {
+            val info = com.elion.mdm.system.MDMStateMachine.getStateInfo(getApplication())
+            if (info.state == com.elion.mdm.system.MDMState.INIT || info.state == com.elion.mdm.system.MDMState.REGISTERING) {
+                val profileId = info.metadata["profile_id"]
+                val apiUrl = info.metadata["api_url"]
+                val bootstrapToken = info.metadata["bootstrap_token"]
+                
+                if (!profileId.isNullOrBlank() && !apiUrl.isNullOrBlank() && !bootstrapToken.isNullOrBlank()) {
+                    android.util.Log.i("ElionViewModel", "Auto-Enrollment disparado para profile: $profileId")
+                    enroll(bootstrapToken, apiUrl, profileId)
+                }
+            }
         }
     }
 

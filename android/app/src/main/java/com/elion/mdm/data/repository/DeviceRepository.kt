@@ -43,6 +43,12 @@ class DeviceRepository(private val context: Context) {
             ApiClient.invalidate()
 
             val deviceId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: "UNKNOWN_${System.currentTimeMillis()}"
+            val profileId = try {
+                prefs.enrollmentStatePayload?.let { json ->
+                    val map = com.google.gson.Gson().fromJson(json, Map::class.java) as Map<String, Any>
+                    (map["metadata"] as? Map<String, String>)?.get("profile_id")
+                }
+            } catch (e: Exception) { null }
 
             val api     = ApiClient.getInstance(context)
             val request = EnrollmentRequest(
@@ -51,8 +57,9 @@ class DeviceRepository(private val context: Context) {
                 deviceType      = "android",
                 bootstrapSecret = bootstrapSecret,
                 extraData       = mapOf(
+                    "profile_id" to (profileId ?: ""),
                     "android_version" to Build.VERSION.RELEASE,
-                    "serial_number"   to (Build.SERIAL.takeIf { it != Build.UNKNOWN } ?: "UNKNOWN")
+                    "legacy_serial"   to (Build.SERIAL.takeIf { it != Build.UNKNOWN } ?: "UNKNOWN")
                 )
             )
 
@@ -72,6 +79,49 @@ class DeviceRepository(private val context: Context) {
             Log.i(TAG, "Enrollment OK — deviceId=${body.deviceId}")
             body
         }
+
+    /**
+     * Recupera o estado mestre (SSOT) do dispositivo.
+     * Deve ser chamado logo após o enrollment e em cada reentrada crítica.
+     */
+    suspend fun bootstrapData(): Result<com.elion.mdm.data.remote.dto.BootstrapResponse> =
+        runCatching {
+            val deviceId = getDeviceId() ?: error("Device ID não encontrado")
+            val api = ApiClient.getInstance(context)
+            val response = api.getBootstrapData(deviceId)
+            
+            if (!response.isSuccessful) {
+                error("Falha ao obter bootstrap: HTTP ${response.code()}")
+            }
+            
+            response.body() ?: error("Bootstrap body vazio")
+        }
+
+    /**
+     * Reporta o status de saúde e conformidade (Enterprise 3B).
+     */
+    suspend fun reportStatus(
+        health: com.elion.mdm.data.remote.dto.DeviceHealth,
+        reason: String? = null,
+        policyHash: String,
+        appliedPolicies: List<String> = emptyList(),
+        failedPolicies: List<String> = emptyList()
+    ): Result<Unit> = runCatching {
+        val deviceId = getDeviceId() ?: error("Device ID não encontrado")
+        val api = ApiClient.getInstance(context)
+        val request = com.elion.mdm.data.remote.dto.StateReportRequest(
+            health = health.name,
+            reasonCode = reason,
+            policyHash = policyHash,
+            appliedPolicies = appliedPolicies,
+            failedPolicies = failedPolicies
+        )
+        
+        val response = api.reportStatus(deviceId, request)
+        if (!response.isSuccessful) {
+            error("Falha ao reportar status: HTTP ${response.code()}")
+        }
+    }
 
     // ─── Estado local ─────────────────────────────────────────────────────────
 

@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional
 from datetime import datetime, timezone
 
-from backend.api.deps import get_current_user
+from backend.api.auth import get_current_user
 from backend.models.user import User
 from backend.schemas.policy import (
     PolicyConfigCreate,
@@ -336,6 +336,17 @@ async def receive_state_report(
     Trigger automático de compliance check.
     """
     from backend.services.drift_detector import evaluate_compliance
+    from backend.core.database import async_session_maker
+    from backend.models.policy import PolicyState
+    from sqlalchemy.future import select
+
+    # P2.0 (Hardenings 5.9.1) - Deduplicação Silenciosa
+    async with async_session_maker() as db:
+        result = await db.execute(select(PolicyState).where(PolicyState.device_id == device_id))
+        ps = result.scalar_one_or_none()
+        if ps and ps.state_hash == report.state_hash:
+            logger.info(f"📱 [StateReport] device={device_id} ignorado (hash idêntico)")
+            return {"status": "ok", "compliance_status": ps.last_compliance_status}
 
     state_dict = report.model_dump(exclude_none=True)
     logger.info(f"📱 [StateReport] device={device_id}: {list(state_dict.keys())}")

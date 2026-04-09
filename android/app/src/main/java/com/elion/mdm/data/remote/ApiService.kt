@@ -68,4 +68,37 @@ interface ApiService {
     suspend fun getPolicy(
         @Path("device_id") deviceId: String
     ): Response<PolicyResponse>
+
+    // ─── Bootstrap (SSOT) ─────────────────────────────────────────────────────────
+    // Recupera o estado completo para provisionamento ou recuperação.
+
+    @GET("api/devices/{device_id}/bootstrap")
+    suspend fun getBootstrapData(
+        @Path("device_id") deviceId: String
+    ): Response<BootstrapResponse>
+
+    // ─── Status Report (Compliance) ───────────────────────────────────────────────
+    // Envia relatório detalhado de saúde e conformidade (Enterprise 3B).
+
+    @POST("api/devices/{device_id}/status")
+    suspend fun reportStatus(
+        @Path("device_id") deviceId: String,
+        @Body request: StateReportRequest
+    ): Response<Unit>
+
+    // ─── File Download ────────────────────────────────────────────────────────
+    
+    @Streaming
+    @GET
+    suspend fun downloadFile(@Url url: String): Response<okhttp3.ResponseBody>
+
+    // ─── Trust & Attestation (Phase 4) ────────────────────────────────────────
+    
+    @GET("api/devices/nonce")
+    suspend fun getAttestationNonce(): Response<NonceResponse>
+
+    @POST("api/devices/attest")
+    suspend fun verifyAttestation(
+        @Body request: AttestationRequest
+    ): Response<Map<String, Any>>
 }

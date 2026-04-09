@@ -74,6 +74,53 @@ class SecurePreferences(context: Context) {
         get() = prefs.getLong(KEY_LAST_SYNC, 0L)
         set(v) = prefs.edit().putLong(KEY_LAST_SYNC, v).apply()
 
+    var lastStateHash: String?
+        get() = prefs.getString("last_state_hash", null)
+        set(v) = prefs.edit().putString("last_state_hash", v).apply()
+        
+    var lastStateReportMs: Long
+        get() = prefs.getLong("last_state_report_ms", 0L)
+        set(v) = prefs.edit().putLong("last_state_report_ms", v).apply()
+
+    // ─── Telemetria ───────────────────────────────────────────────────────────
+
+    var lastWsConnectedAt: Long
+        get() = prefs.getLong("last_ws_connected_at", 0L)
+        set(v) = prefs.edit().putLong("last_ws_connected_at", v).apply()
+
+    var wsReconnectCount: Int
+        get() = prefs.getInt("ws_reconnect_count", 0)
+        set(v) = prefs.edit().putInt("ws_reconnect_count", v).apply()
+
+    var lastErrorCode: String?
+        get() = prefs.getString("last_error_code", null)
+        set(v) = prefs.edit().putString("last_error_code", v).apply()
+
+    var lastFlushTs: Long
+        get() = prefs.getLong("last_flush_ts", 0L)
+        set(v) = prefs.edit().putLong("last_flush_ts", v).apply()
+
+    var queueSize: Int
+        get() = prefs.getInt("queue_size", 0)
+        set(v) = prefs.edit().putInt("queue_size", v).apply()
+
+    var lastReportedReconnectCount: Int
+        get() = prefs.getInt("last_rep_reconn_count", -1)
+        set(v) = prefs.edit().putInt("last_rep_reconn_count", v).apply()
+
+    var lastReportedErrorCode: String?
+        get() = prefs.getString("last_rep_err_code", null)
+        set(v) = prefs.edit().putString("last_rep_err_code", v).apply()
+
+    // ─── Enrollment State Machine ──────────────────────────────────────────
+    var enrollmentStatePayload: String?
+        get() = prefs.getString("enrollment_state_payload", null)
+        set(v) = prefs.edit().putString("enrollment_state_payload", v).apply()
+        
+    var enrollmentStateChecksum: String?
+        get() = prefs.getString("enrollment_state_checksum", null)
+        set(v) = prefs.edit().putString("enrollment_state_checksum", v).apply()
+
     // ─── Kiosk ────────────────────────────────────────────────────────────────
 
     var isKioskEnabled: Boolean

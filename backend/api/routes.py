@@ -5,8 +5,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.services.mdm_service import MDMService
 from backend.repositories.device_repo import DeviceRepository
 from backend.core.database import get_db
-from backend.schemas.device import DeviceCreate, DeviceResponse, PolicyCreate, DeviceUpdate, Policy, LogResponse, CommandResponse, EnrollmentResponse
+from backend.schemas.device import (
+    DeviceCreate, DeviceResponse, DeviceUpdate, DeviceFullResponse, EnrollmentResponse,
+    AttestationRequest, NonceResponse
+)
+from backend.services.attestation_service import AttestationService
+from backend.services.redis_service import RedisService
+from backend.schemas.policy import (
+    ProvisioningProfileCreate, ProvisioningProfileResponse, ProvisioningProfileUpdate,
+    DevicePolicyResponse, PolicySyncHandshake, DeviceCommandResponse, CommandStatusUpdate,
+    DeviceCommandCreate, BootstrapResponse, DeviceStatusReport
+)
 from backend.schemas.user import DeviceEnrollRequest
+from backend.schemas.telemetry import TelemetryResponse
 from backend.api.auth import get_current_user
 from backend.api.device_auth import get_current_device
 from backend.core.limiter import limiter
@@ -14,6 +25,8 @@ from backend.models.device import Device
 from backend.models.user import User
 import datetime
 import os
+import uuid
+import logging
 
 router = APIRouter()
 
@@ -23,146 +36,137 @@ def get_repo(db: AsyncSession = Depends(get_db)) -> DeviceRepository:
 def get_service(repo: DeviceRepository = Depends(get_repo)) -> MDMService:
     return MDMService(repo)
 
+def get_redis() -> RedisService:
+    return RedisService()
 
-# ============= ENROLL SEGURO COM BOOTSTRAP_SECRET =============
-@router.post("/enroll", response_model=dict, tags=["Dispositivos"])
-@limiter.limit("10/hour")
-async def enroll(
+def get_attestation(redis: RedisService = Depends(get_redis)) -> AttestationService:
+    return AttestationService(redis)
+
+
+# ============= 🛡️ CAMADA 1: CORE (Devices & Profiles) =============
+
+@router.get("/profiles", response_model=List[ProvisioningProfileResponse], tags=["SaaS Admin"])
+async def list_profiles(
+    service: MDMService = Depends(get_service),
+    current_user: User = Depends(get_current_user)
+):
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Somente administrador pode gerenciar perfis globais.")
+    return await service.list_profiles()
+
+@router.post("/profiles", response_model=ProvisioningProfileResponse, tags=["SaaS Admin"])
+async def create_profile(
+    profile_data: ProvisioningProfileCreate,
+    service: MDMService = Depends(get_service),
+    current_user: User = Depends(get_current_user)
+):
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Acesso restrito.")
+    return await service.create_profile(profile_data)
+
+@router.get("/profiles/{profile_id}", response_model=ProvisioningProfileResponse, tags=["SaaS Admin"])
+async def get_profile(
+    profile_id: uuid.UUID,
+    service: MDMService = Depends(get_service),
+    current_user: User = Depends(get_current_user)
+):
+    return await service.get_profile(profile_id)
+
+@router.put("/profiles/{profile_id}", response_model=ProvisioningProfileResponse, tags=["SaaS Admin"])
+async def update_profile(
+    profile_id: uuid.UUID,
+    profile_data: ProvisioningProfileUpdate,
+    service: MDMService = Depends(get_service),
+    current_user: User = Depends(get_current_user)
+):
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Acesso restrito.")
+    return await service.update_profile(profile_id, profile_data)
+
+
+# ============= 🛡️ CAMADA 2: ENROLLMENT SEGMENTADO =============
+
+@router.post("/enroll", response_model=EnrollmentResponse, tags=["Device Ops"])
+@limiter.limit("5/minute")
+async def enroll_device(
     request: Request,
     req: DeviceEnrollRequest, 
     service: MDMService = Depends(get_service)
 ):
     """
-    Enroll SEGURO de dispositivo Android.
+    Novo Enrollment (SaaS Nível):
+    O dispositivo informa obrigatóriamente um `profile_id` válido para ser aceito.
     """
-    from backend.core.config import BOOTSTRAP_SECRET
     import logging
-    
-    logger_error = logging.getLogger("error")
-    logger_security = logging.getLogger("security")
-    
-    # 🔍 1. Validação de Segurança Crítica (Bootstrap Secret)
-    if not req.bootstrap_secret or req.bootstrap_secret != BOOTSTRAP_SECRET:
-        logger_security.warning(
-            f"❌ [Security Denial] Tentativa de enroll com SECRET INVÁLIDO | "
-            f"device_id: {req.device_id}, ip: {request.client.host}"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token de segurança bootstrapping inválido."
-        )
-    
-    # 🔍 2. Validação de Formato de Dados
-    if not req.device_id or len(req.device_id) < 3:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="O device_id deve ter pelo menos 3 caracteres."
-        )
-
     try:
-        # ⚙️ 3. Processamento de Enroll no Service (possui lógica de UPSERT/Filtro)
-        device, device_token = await service.enroll_device(
-            req.device_id, 
-            req.name, 
-            req.device_type,
-            **(req.extra_data or {})
+        expected_secret = os.getenv("ENROLLMENT_SECRET", "padrao-inseguro-troque-em-prod")
+        if req.bootstrap_secret != expected_secret:
+            logging.getLogger("error").warning(f"🚨 Tentativa de Enroll bloqueada para {req.device_id} (Secret inválido)")
+            raise HTTPException(status_code=403, detail="Autenticação de bootstrap falhou.")
+
+        # Realiza o enroll criando a associação com a política inicial
+        device, token = await service.enroll_device(
+            device_id=req.device_id,
+            name=req.name,
+            device_type=req.device_type,
+            profile_id=req.profile_id,
+            **req.extra_data if req.extra_data else {}
         )
-        
-        # 📡 4. Notificação via WebSocket para o Painel
-        try:
-            await manager.broadcast_to_dashboards({
-                "type": "DEVICE_ENROLLED",
-                "device_id": device.device_id,
-                "name": device.name,
-                "status": device.status
-            })
-        except Exception as ws_err:
-            logger_error.error(f"⚠️ Erro ao notificar dashboards (non-critical): {str(ws_err)}")
         
         return {
-            "message": "Dispositivo registrado com sucesso e autorizado.",
+            "message": "Handshake de identidade concluído.",
             "device_id": device.device_id,
-            "device_token": device_token,
-            "api_url": os.getenv("API_URL", "http://localhost:8000"),
+            "device_token": token,
+            "api_url": str(request.base_url),
             "enrollment_status": "success"
         }
-
-    except HTTPException as http_ex:
-        # Repassa exceções controladas da camada de service (ex: 403, 400)
-        raise http_ex
-
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        # 🛑 5. Tratamento de Erros Inesperados (Rollback já foi feito no Repo se necessário)
-        error_type = type(e).__name__
-        logger_error.error(
-            f"🔥 [ENROLL CRASH] Erro crítico inesperado: {error_type} | "
-            f"MSG: {str(e)} | device_id: {req.device_id}"
-        )
+        logging.getLogger("error").error(f"🔥 [ENROLL CRASH]: {str(e)}")
+        raise HTTPException(status_code=500, detail="Erro interno no processamento do registro.")
+
+
+@router.get("/devices/{device_id}/bootstrap", response_model=BootstrapResponse, tags=["Device Ops"])
+async def get_bootstrap(
+    device_id: str,
+    service: MDMService = Depends(get_service),
+    current_device: Device = Depends(get_current_device)
+):
+    """
+    Fonte Única de Verdade (SSOT).
+    Retorna o estado completo para provisionamento ou recuperação.
+    """
+    if current_device.device_id != device_id:
+        raise HTTPException(status_code=403, detail="Não autorizado.")
         
-        # Em produção, ocultamos detalhes sensíveis do erro no retorno JSON
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Ocorreu um erro interno ao processar seu registro. Tente novamente em instantes."
-        )
+    return await service.get_bootstrap_data(device_id)
 
 
-@router.get("/devices", response_model=List[DeviceResponse], response_model_by_alias=True)
+@router.post("/devices/{device_id}/status", tags=["Device Ops"])
+async def report_status(
+    device_id: str,
+    report: DeviceStatusReport,
+    service: MDMService = Depends(get_service),
+    current_device: Device = Depends(get_current_device)
+):
+    """Report detalhado de saúde e conformidade (Enterprise 3B)."""
+    if current_device.device_id != device_id:
+        raise HTTPException(status_code=403, detail="Não autorizado.")
+        
+    await service.process_status_report(device_id, report.model_dump())
+    return {"status": "received"}
+
+
+@router.get("/devices", response_model=List[DeviceResponse], tags=["Dashboard"])
 async def list_devices(
-    status: Optional[str] = None,
-    search: Optional[str] = None,
     service: MDMService = Depends(get_service),
     current_user: User = Depends(get_current_user)
 ):
-    devices = await service.list_devices()
-    
-    if status:
-        if status == 'online':
-             devices = [d for d in devices if d.is_active or d.status == 'online']
-        elif status == 'offline':
-             devices = [d for d in devices if not d.is_active or d.status == 'offline']
-        else:
-             devices = [d for d in devices if d.status == status]
-             
-    if search:
-        search_lower = search.lower()
-        devices = [d for d in devices if search_lower in d.name.lower() or search_lower in d.device_id.lower()]
-        
-    return devices
+    return await service.list_devices()
 
-
-@router.get("/devices/summary")
-async def get_summary(
-    service: MDMService = Depends(get_service),
-    current_user: User = Depends(get_current_user)
-):
-    devices = await service.list_devices()
-    total = len(devices)
-    online = sum(1 for d in devices if d.status == 'online' or d.is_active)
-    offline = sum(1 for d in devices if d.status == 'offline' or (not d.is_active and d.status != 'online'))
-    locked = sum(1 for d in devices if d.status == 'locked')
-    
-    return {
-        "total": total,
-        "online": online,
-        "offline": offline,
-        "locked": locked,
-        "last_global_checkin": None
-    }
-
-
-@router.delete("/devices/{device_id}")
-async def remove_device(
-    device_id: str, 
-    service: MDMService = Depends(get_service),
-    current_user: User = Depends(get_current_user)
-):
-    ok = await service.remove_device(device_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail="Device not found")
-    return {"status": "removed"}
-
-
-@router.get("/devices/{device_id}", response_model=DeviceResponse, response_model_by_alias=True)
+@router.get("/devices/{device_id}", response_model=DeviceResponse, tags=["Dashboard"])
 async def get_device(
     device_id: str, 
     service: MDMService = Depends(get_service),
@@ -170,328 +174,148 @@ async def get_device(
 ):
     d = await service.get_device(device_id)
     if not d:
-        raise HTTPException(status_code=404, detail="Device not found")
+        raise HTTPException(status_code=404, detail="Dispositivo não encontrado.")
     return d
 
-@router.get("/devices/{device_id}/telemetry")
+@router.get("/devices/{device_id}/telemetry", response_model=List[TelemetryResponse], tags=["Dashboard"])
 async def get_device_telemetry(
     device_id: str, 
     service: MDMService = Depends(get_service),
     current_user: User = Depends(get_current_user)
 ):
-    telemetry = await service.repo.get_telemetry(device_id)
-    if not telemetry:
-        return {} # Return empty object instead of 404 to gracefully handle devices with no telemetry yet
-    return {
-        "battery_level": telemetry.battery_level,
-        "is_charging": telemetry.is_charging,
-        "free_disk_space_mb": telemetry.free_disk_space_mb,
-        "installed_apps": telemetry.installed_apps,
-        "location": {
-            "latitude": telemetry.latitude,
-            "longitude": telemetry.longitude
-        } if telemetry.latitude and telemetry.longitude else None,
-        "foreground_app": telemetry.foreground_app,
-        "timestamp": telemetry.timestamp
-    }
+    """Retorna os dados recentes de telemetria do dispositivo."""
+    d = await service.get_device(device_id)
+    if not d:
+        raise HTTPException(status_code=404, detail="Dispositivo não encontrado.")
+    return await service.get_device_telemetry(device_id)
 
 
-@router.post("/devices/{device_id}/lock", tags=["Comandos"])
-async def lock_device(
+# ============= 🛡️ CAMADA 3: POLICY HANDSHAKE (Drift Detection) =============
+
+@router.post("/devices/{device_id}/policy/sync", response_model=Optional[DevicePolicyResponse], tags=["Device Ops"])
+async def sync_policy(
     device_id: str,
-    service: MDMService = Depends(get_service),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Envia comando de bloqueio de tela para o device.
-
-    Fluxo:
-      1. Persiste na CommandQueue (status=pending)
-      2. Tenta entrega imediata via WebSocket → status=sent
-      3. Se offline → mantém pending para entrega no reconnect
-    """
-    device = await service.get_device(device_id)
-    if not device:
-        raise HTTPException(status_code=404, detail="Device not found")
-
-    from backend.api.command_dispatcher import dispatch_command
-    try:
-        result = await dispatch_command(
-            service, manager, device_id, "lock_device",
-            issued_by=current_user.email,
-        )
-    except OverflowError as e:
-        raise HTTPException(status_code=429, detail=str(e))
-    return result
-
-
-@router.post("/devices/{device_id}/reboot", tags=["Comandos"])
-async def reboot_device(
-    device_id: str,
-    service: MDMService = Depends(get_service),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Envia comando de reinicialização para o device.
-    """
-    device = await service.get_device(device_id)
-    if not device:
-        raise HTTPException(status_code=404, detail="Device not found")
-
-    from backend.api.command_dispatcher import dispatch_command
-    try:
-        result = await dispatch_command(
-            service, manager, device_id, "reboot_device",
-            issued_by=current_user.email,
-        )
-    except OverflowError as e:
-        raise HTTPException(status_code=429, detail=str(e))
-    return result
-
-
-@router.post("/devices/{device_id}/wipe", tags=["Comandos"])
-async def wipe_device(
-    device_id: str,
-    service: MDMService = Depends(get_service),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Envia comando de wipe (reset de fábrica) para o device.
-    Comando irreversível — confirmar no frontend antes de chamar.
-    """
-    device = await service.get_device(device_id)
-    if not device:
-        raise HTTPException(status_code=404, detail="Device not found")
-
-    from backend.api.command_dispatcher import dispatch_command
-    try:
-        result = await dispatch_command(
-            service, manager, device_id, "wipe_device",
-            issued_by=current_user.email,
-        )
-    except OverflowError as e:
-        raise HTTPException(status_code=429, detail=str(e))
-    return result
-
-
-@router.post("/devices/{device_id}/checkin", tags=["Dispositivos"])
-@limiter.limit("30/minute")
-async def checkin_device(
-    request: Request,
-    device_id: str, 
-    payload: Dict, 
+    handshake: PolicySyncHandshake,
     service: MDMService = Depends(get_service),
     current_device: Device = Depends(get_current_device)
 ):
-    """Endpoint restrito para check-in de dispositivos (chamado pelo app Android)"""
-    # ✅ SEGURANÇA (P1.1): Valida que device_id da URL corresponde ao device do token
+    """
+    Endpoint de Sincronização Inteligente.
+    Se o hash do device bater com o do backend, retorna 204 (No Content).
+    Se houver drift ou upgrade, retorna a nova política completa.
+    """
     if current_device.device_id != device_id:
-        import logging
-        logger = logging.getLogger("security")
-        logger.error(f"⚠️ DEVICE MISMATCH (checkin): token={current_device.device_id}, url={device_id}")
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="Unauthorized device")
+        raise HTTPException(status_code=403, detail="Não autorizado para este dispositivo.")
         
-    await service.process_checkin(device_id, payload)
+    config = await service.sync_policy(device_id, handshake.current_hash, handshake.current_version)
+    if not config:
+        return None # FastAPI retorna 200 OK com corpo vazio (ou podemos mudar para 204)
     
-    # Notifica dashboards que o device piscou o radar
-    await manager.broadcast_to_dashboards({
-        "type": "DEVICE_CHECKIN",
-        "device_id": device_id,
-        "status": "online"
-    })
-    
-    return {"status": "checked_in"}
+    return config
 
-@router.get("/devices/{device_id}/commands/pending", response_model=List[CommandResponse], tags=["Dispositivos"])
+
+# ============= ⚡ CAMADA 4: COMMAND ENGINE (Idempotency) =============
+
+@router.get("/devices/{device_id}/commands/pending", response_model=List[DeviceCommandResponse], tags=["Device Ops"])
 async def get_pending_commands(
     device_id: str, 
     service: MDMService = Depends(get_service),
     current_device: Device = Depends(get_current_device)
 ):
-    """Endpoint restrito para dispositivos buscarem comandos pendentes"""
-    # ✅ SEGURANÇA (P1.1): Valida que device_id da URL corresponde ao device do token
     if current_device.device_id != device_id:
-        import logging
-        logger = logging.getLogger("security")
-        logger.error(f"⚠️ DEVICE MISMATCH (pending_commands): token={current_device.device_id}, url={device_id}")
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="Unauthorized device")
+        raise HTTPException(status_code=403, detail="Acesso negado.")
         
-    pending = await service.get_pending_commands(device_id)
-    return [{"id": str(c.id), "command": c.command, "payload": c.payload} for c in pending]
+    return await service.get_pending_commands(device_id)
 
-@router.post("/devices/{device_id}/commands/{command_id}/ack", tags=["Dispositivos"])
+@router.post("/devices/{device_id}/commands/{command_id}/ack", tags=["Device Ops"])
 async def acknowledge_command(
     device_id: str, 
-    command_id: int, 
+    command_id: uuid.UUID,
+    req: CommandStatusUpdate,
     service: MDMService = Depends(get_service),
     current_device: Device = Depends(get_current_device)
 ):
-    """
-    Dispositivo reconhece que recebeu o comando.
-    
-    ✅ SEGURO (P1.1): Valida que device_id da URL corresponde ao device do token.
-    Previne device A de reconhecer comando de device B.
-    """
-    # Validar que current_device pertence a este device_id
+    """O dispositivo confirma a execução ou falha de um comando."""
     if current_device.device_id != device_id:
-        import logging
-        logger = logging.getLogger("security")
-        logger.error(f"⚠️ DEVICE MISMATCH: token={current_device.device_id}, url={device_id}")
-        raise HTTPException(status_code=403, detail="Unauthorized device")
+        raise HTTPException(status_code=403, detail="Acesso negado.")
     
-    # Usar método seguro que valida propriedade
-    ok = await service.repo.acknowledge_command_secure(device_id, command_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail="Command not found")
-    return {"status": "acknowledged", "command_id": command_id}
-
-@router.post("/devices/{device_id}/commands/{command_id}/status", tags=["Dispositivos"])
-async def update_command_status(
-    device_id: str, 
-    command_id: int, 
-    payload: Dict, 
-    service: MDMService = Depends(get_service),
-    current_device: Device = Depends(get_current_device)
-):
-    """
-    Dispositivo reporta status final de execução do comando.
-    
-    ✅ SEGURO (P1.1): Valida ownership do comando antes de atualizar.
-    Previne device A de modificar status de comando de device B.
-    """
-    # Validar que current_device pertence a este device_id
-    if current_device.device_id != device_id:
-        import logging
-        logger = logging.getLogger("security")
-        logger.error(f"⚠️ DEVICE MISMATCH: token={current_device.device_id}, url={device_id}")
-        raise HTTPException(status_code=403, detail="Unauthorized device")
-    
-    status = payload.get("status", "completed")
-    error_msg = payload.get("error_message")
-    
-    # Usar métodos seguros que validam propriedade
-    if status == "completed":
-        ok = await service.repo.complete_command_secure(device_id, command_id, error_msg)
-    elif status == "failed":
-        ok = await service.repo.fail_command_secure(device_id, command_id, error_msg or "Unknown error")
-    else:
-        ok = False
-    
-    if not ok:
-        raise HTTPException(status_code=404, detail="Command not found")
-    
-    return {"status": "updated", "command_id": command_id, "new_status": status}
-
-@router.get("/devices/{device_id}/commands/{command_id}/status", tags=["Dispositivos"])
-async def get_command_status(
-    device_id: str,
-    command_id: int,
-    service: MDMService = Depends(get_service),
-    current_device: Device = Depends(get_current_device)
-):
-    """
-    Dispositivo consulta status de um comando.
-    
-    ✅ SEGURO (P1.1): Valida ownership do comando antes de retornar status.
-    Previne device A de consultar status de comando de device B.
-    """
-    # Validar que current_device pertence a este device_id
-    if current_device.device_id != device_id:
-        import logging
-        logger = logging.getLogger("security")
-        logger.error(f"⚠️ DEVICE MISMATCH: token={current_device.device_id}, url={device_id}")
-        raise HTTPException(status_code=403, detail="Unauthorized device")
-    
-    # Usar método seguro que valida propriedade
-    status = await service.repo.get_command_status_secure(device_id, command_id)
-    if not status:
-        raise HTTPException(status_code=404, detail="Command not found")
-    return status
-
-@router.get("/devices/{device_id}/commands/failed", response_model=List[CommandResponse], tags=["Dispositivos"])
-async def get_failed_commands(
-    device_id: str,
-    service: MDMService = Depends(get_service),
-    current_device: Device = Depends(get_current_device)
-):
-    """Retorna comandos que falharam para quem tentar reexecutar"""
-    failed = await service.repo.get_failed_commands(device_id)
-    return [{"id": str(c.id), "command": c.command, "payload": c.payload, "error": c.error_message} for c in failed]
-
-
-
-@router.get("/commands", tags=["Auditoria"])
-async def get_commands_audit(
-    device_id: Optional[str] = None,
-    status: Optional[str] = None,
-    action: Optional[str] = None,
-    issued_by: Optional[str] = None,
-    limit: int = Query(100, ge=1, le=1000),
-    offset: int = Query(0, ge=0),
-    service: MDMService = Depends(get_service),
-    current_user: User = Depends(get_current_user)
-):
-    """
-    Lista histórico de comandos para auditoria enterprise.
-    (Somente admins autenticados via JWT).
-    """
-    cmds = await service.repo.get_commands_audit(
-        device_id=device_id,
-        status=status,
-        action=action,
-        issued_by=issued_by,
-        limit=limit,
-        offset=offset
+    ok = await service.ack_command(
+        device_id, 
+        command_id, 
+        req.status, 
+        metadata={"error": req.error_message} if req.error_message else None
     )
-    return cmds
-
-
-@router.get("/policies", response_model=List[Policy])
-async def list_policies(service: MDMService = Depends(get_service), current_user: User = Depends(get_current_user)):
-    return await service.list_policies()
-
-@router.post("/policies", response_model=Policy)
-async def create_global_policy(policy_data: PolicyCreate, service: MDMService = Depends(get_service), current_user: User = Depends(get_current_user)):
-    policy_dict = policy_data.model_dump()
-    # Create the policy as a global template (device_id=None)
-    policy = await service.repo.add_policy(None, policy_dict)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Comando não encontrado ou já processado.")
     
-    # Automatically queue it for all devices since it's a global policy
-    devices = await service.list_devices()
-    for d in devices:
-        await service.repo.add_command(d.device_id, "apply_policy", payload=policy_dict)
-        await manager.send_command_to_device(d.device_id, {"command": "apply_policy", "payload": policy_dict})
-        
-    return policy
+    return {"status": "success", "command_id": str(command_id)}
 
-@router.get("/policies/{policy_id}", response_model=Policy)
-async def get_policy(policy_id: str, service: MDMService = Depends(get_service), current_user: User = Depends(get_current_user)):
-    return {"id": policy_id, "name": f"Policy {policy_id}", "type": "security", "status": "active", "created_at": None}
-
-
-@router.post("/devices/{device_id}/policies")
-async def apply_policy_to_device(
-    device_id: str, 
-    policy_data: PolicyCreate, 
+@router.post("/devices/{device_id}/commands", response_model=DeviceCommandResponse, tags=["Dashboard Admin"])
+async def create_command(
+    device_id: str,
+    req: DeviceCommandCreate,
     service: MDMService = Depends(get_service),
     current_user: User = Depends(get_current_user)
 ):
-    # Pass dict to apply_policy
-    ok = await service.apply_policy(device_id, policy_data.model_dump())
-    if not ok:
-        raise HTTPException(status_code=404, detail="Device not found")
-        
-    await manager.send_command_to_device(device_id, {
-        "command": "apply_policy", 
-        "payload": policy_data.model_dump()
+    """Dispara um novo comando remoto (Admin only)."""
+# ============= 🛡️ CAMADA EX: TRUST & INTEGRITY (Play Integrity) =============
+
+@router.get("/devices/nonce", response_model=NonceResponse, tags=["Device Ops"])
+async def get_attestation_nonce(
+    current_device: Device = Depends(get_current_device),
+    attestation: AttestationService = Depends(get_attestation)
+):
+    """Gera um nonce seguro vinculado ao device_id e tenant_id para atestação."""
+    nonce = await attestation.generate_nonce(current_device.device_id, str(current_device.tenant_id))
+    return {"nonce": nonce, "expires_in": 300}
+
+@router.post("/devices/attest", tags=["Device Ops"])
+async def verify_device_attestation(
+    req: AttestationRequest,
+    current_device: Device = Depends(get_current_device),
+    attestation: AttestationService = Depends(get_attestation),
+    service: MDMService = Depends(get_service)
+):
+    """Valida o token de integridade e atualiza o estado de Trust do dispositivo."""
+    result = await attestation.verify_device_integrity(
+        current_device.device_id,
+        str(current_device.tenant_id),
+        req.integrity_token, 
+        req.nonce
+    )
+    
+    # Atualiza o status do dispositivo com o novo Trust Score
+    await service.process_status_report(current_device.device_id, {
+        "health": result["status"],
+        "trust_score": result["trust_score"],
+        "reason": result.get("reason", "ATTESTATION_SUCCESS")
     })
-    return {"status": "applied"}
+    
+    return result
 
 
-@router.get("/logs", response_model=List[LogResponse])
-async def get_logs(device_id: Optional[str] = None, page: int = 1, size: int = 50, service: MDMService = Depends(get_service), current_user: User = Depends(get_current_user)):
-    return [
-        {"id": "1", "device_id": device_id or "all", "type": "system", "message": "System logs retrieved", "severity": "info", "timestamp": datetime.datetime.utcnow()}
-    ]
+# ============= 📊 AUDITORIA & TELEMETRIA =============
+
+@router.get("/audit", tags=["SaaS Admin"])
+async def get_audit_logs(
+    limit: int = 100,
+    service: MDMService = Depends(get_service),
+    current_user: User = Depends(get_current_user)
+):
+    from backend.models.audit_log import AuditLog
+    from sqlalchemy.future import select
+    result = await service.repo.db.execute(select(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit))
+    return result.scalars().all()
+
+@router.post("/checkin", tags=["Device Ops"])
+async def checkin(
+    device_id: str,
+    payload: Dict,
+    service: MDMService = Depends(get_service),
+    current_device: Device = Depends(get_current_device)
+):
+    if current_device.device_id != device_id:
+        raise HTTPException(status_code=403, detail="Acesso negado.")
+        
+    await service.process_checkin(device_id, payload)
+    return {"status": "ok"}

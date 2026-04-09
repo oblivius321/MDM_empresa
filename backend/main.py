@@ -1,9 +1,11 @@
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from backend.api import routes
 from backend.api.auth import router as auth_router
 from backend.core.database import engine, Base
 import contextlib
 import os
+import logging
 from dotenv import load_dotenv
 from pathlib import Path
 
@@ -16,6 +18,9 @@ import backend.models.telemetry
 import backend.models.role
 import backend.models.permission
 import backend.models.audit_log
+from backend.utils.logging_config import setup_logging
+from backend.middleware.observability import ObservabilityMiddleware
+from prometheus_fastapi_instrumentator import Instrumentator
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -49,98 +54,79 @@ async def lifespan(app: FastAPI):
     #   sent_timeout  (30s) → device não confirmou recepção → failed_no_ack
     #   acked_timeout (90s) → device confirmou mas não executou → failed_no_result
     import asyncio
+    #   retry_count: tentativas enviadas
+    #   attempts:    total de ciclos de vida (pending -> sent)
     async def command_timeout_watchdog():
         import logging
-        from datetime import datetime, timezone, timedelta
-        from backend.core.database import async_session_maker
-        from backend.models.policy import CommandQueue
-        from sqlalchemy import and_
+        from datetime import datetime, timedelta
         from sqlalchemy.future import select
+        from sqlalchemy import and_
+        
+        from backend.core import async_session_maker, CommandStatus, utcnow
+        from backend.repositories.device_repo import DeviceRepository
+        from backend.models.policy import CommandQueue
 
         wd_logger = logging.getLogger("cmd_watchdog")
-        SENT_TIMEOUT_SECONDS  = 30   # sem ACK após 30s
-        ACKED_TIMEOUT_SECONDS = 90   # sem RESULT após 90s da acked_at
+        wd_logger.info("⏰ Watchdog de Comandos (Enterprise) iniciado com Locking e Exponential Backoff.")
 
         while True:
-            await asyncio.sleep(30)
+            await asyncio.sleep(15) # Ciclo mais rápido para processamento de retry
             try:
                 async with async_session_maker() as db:
-                    now = datetime.now(timezone.utc)
+                    repo = DeviceRepository(db)
+                    now_naive = utcnow()
 
-                    # ── Janela 1: sent → failed_no_ack ────────────────────────
-                    sent_cutoff = now - timedelta(seconds=SENT_TIMEOUT_SECONDS)
-                    res1 = await db.execute(
-                        select(CommandQueue).where(
-                            and_(
-                                CommandQueue.status == "sent",
-                                CommandQueue.sent_at < sent_cutoff,
-                            )
-                        )
+                    # ── 1. Processamento de Timeouts (DISPATCHED/sent) ─────────────────
+                    # Lock seletivo via FOR UPDATE SKIP LOCKED garante exclusividade por worker
+                    result = await db.execute(
+                        select(CommandQueue)
+                        .where(CommandQueue.status == CommandStatus.DISPATCHED)
+                        .with_for_update(skip_locked=True)
+                        .limit(50)
                     )
-                    for cmd in res1.scalars().all():
-                        cmd.status = "failed_no_ack"
-                        cmd.error_code = "no_ack"
-                        cmd.error_message = f"Device não confirmou recepção em {SENT_TIMEOUT_SECONDS}s"
-                        cmd.completed_at = now
-                        wd_logger.warning(
-                            f"⏰ [CMD no_ack] cmd_id={cmd.id} action={cmd.command} "
-                            f"device={cmd.device_id} → failed_no_ack"
-                        )
-                        await manager.broadcast_to_dashboards({
-                            "type": "CMD_FAILED",
-                            "device_id": cmd.device_id,
-                            "command_id": cmd.id,
-                            "action": cmd.command,
-                            "status": "failed_no_ack",
-                            "error": cmd.error_message,
-                        })
-                        # Ajuste 2: métricas de timeout
-                        try:
-                            from backend.api.command_dispatcher import emit_command_metrics
-                            emit_command_metrics(cmd)
-                        except Exception:
-                            pass
+                    commands = result.scalars().all()
 
-                    # ── Janela 2: acked → failed_no_result ────────────────────
-                    acked_cutoff = now - timedelta(seconds=ACKED_TIMEOUT_SECONDS)
-                    res2 = await db.execute(
-                        select(CommandQueue).where(
-                            and_(
-                                CommandQueue.status == "acked",
-                                CommandQueue.acked_at < acked_cutoff,
-                            )
-                        )
-                    )
-                    for cmd in res2.scalars().all():
-                        cmd.status = "failed_no_result"
-                        cmd.error_code = "no_result"
-                        cmd.error_message = f"Device não reportou resultado em {ACKED_TIMEOUT_SECONDS}s após ACK"
-                        cmd.completed_at = now
-                        wd_logger.warning(
-                            f"⏰ [CMD no_result] cmd_id={cmd.id} action={cmd.command} "
-                            f"device={cmd.device_id} → failed_no_result"
-                        )
-                        await manager.broadcast_to_dashboards({
-                            "type": "CMD_FAILED",
-                            "device_id": cmd.device_id,
-                            "command_id": cmd.id,
-                            "action": cmd.command,
-                            "status": "failed_no_result",
-                            "error": cmd.error_message,
-                        })
-                        # Ajuste 2: métricas de timeout
-                        try:
-                            from backend.api.command_dispatcher import emit_command_metrics
-                            emit_command_metrics(cmd)
-                        except Exception:
-                            pass
-
-                    await db.commit()
+                    for cmd in commands:
+                        # Cálculo de Backoff Exponencial (Cap de 5 min)
+                        # retry_count incremental a cada re-envio
+                        delay_seconds = min(2 ** (cmd.retry_count or 0), 300)
+                        sent_at = cmd.sent_at or cmd.created_at
+                        
+                        # Se já passou o tempo de grace period (delay)
+                        if now_naive >= (sent_at + timedelta(seconds=delay_seconds + 30)):
+                            old_status = cmd.status
+                            
+                            # Estratégia de Retry (Fase 3)
+                            if (cmd.attempts or 0) < cmd.max_retries:
+                                wd_logger.info(f"🔄 [Retry] cmd_id={cmd.id} ({cmd.command}) atingiu timeout. Tentativa {cmd.attempts + 1}/{cmd.max_retries}")
+                                
+                                # Voltamos para PENDING para o dispatcher/ws pegar novamente
+                                cmd.status = CommandStatus.PENDING
+                                cmd.attempts = (cmd.attempts or 0) + 1
+                                # Limpamos timestamps de envio para novo ciclo
+                                cmd.sent_at = None
+                                
+                                await db.commit()
+                                
+                                await manager.broadcast_to_dashboards({
+                                    "type": "CMD_RETRYING",
+                                    "device_id": cmd.device_id,
+                                    "command_id": str(cmd.id),
+                                    "attempts": cmd.attempts
+                                })
+                            else:
+                                # Falha definitiva
+                                wd_logger.warning(f"⏰ [Timeout] cmd_id={cmd.id} esgotou retries. Falha definitiva.")
+                                await repo.transition_status(cmd, CommandStatus.FAILED, metadata={"error": "timeout_reached"})
+                                await db.commit()
+            
             except Exception as e:
-                wd_logger.error(f"[CMD Watchdog] Erro: {e}")
+                wd_logger.error(f"[Watchdog] Erro crítico no ciclo: {e}")
+                await asyncio.sleep(5)
 
     asyncio.create_task(command_timeout_watchdog())
-    print("⏰ Watchdog de Comandos (Dual-Timeout) iniciado.")
+    wd_logger = logging.getLogger("lifespan")
+    wd_logger.info("⏰ Watchdog de Comandos (Enterprise) registrado.")
 
     # ── WATCHDOG DE COMPLIANCE (Fase 3) ───────────────────────────────
     # Varre o banco a cada 5 min em busca de devices com policies
@@ -196,7 +182,14 @@ async def lifespan(app: FastAPI):
 
     yield
 
-app = FastAPI(title="MDM Projeto", lifespan=lifespan)
+# Configuração de Logs Estruturados (JSON)
+setup_logging()
+
+app = FastAPI(title="MDM Projeto Enterprise", lifespan=lifespan)
+
+# Métricas e Tracing
+app.add_middleware(ObservabilityMiddleware)
+Instrumentator().instrument(app).expose(app)
 
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -271,6 +264,10 @@ app.include_router(websocket_routes.router, prefix="/api")
 app.include_router(rbac_routes.router, prefix="/api")
 # ✅ FASE 3: Registrar rotas de Policy Enterprise
 app.include_router(policy_routes.router)
+
+# ✅ REPOSITÓRIO ESTÁTICO: Hospedagem de APKs e outros recursos
+static_path = Path(__file__).resolve().parent / "static"
+app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
 
 @app.get("/")
 def root():

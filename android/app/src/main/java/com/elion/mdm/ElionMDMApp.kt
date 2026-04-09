@@ -20,6 +20,26 @@ class ElionMDMApp : Application() {
         super.onCreate()
         Log.i(TAG, "Aplicação Elion MDM iniciada")
         
-        // Espaço para inicialização de Crashlytics, Hilt, WorkManager, etc.
+        setupCrashWatchdog()
+    }
+
+    private fun setupCrashWatchdog() {
+        Thread.setDefaultUncaughtExceptionHandler { _, exception ->
+            Log.e(TAG, "🔥 WATCHDOG ACIONADO: Crash Fatal Interceptado!", exception)
+            
+            val intent = android.content.Intent(this, com.elion.mdm.launcher.KioskLauncherActivity::class.java).apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            }
+            
+            try {
+                startActivity(intent)
+                Log.w(TAG, "Tentando relançamento automático via KioskLauncher...")
+            } catch (e: Exception) {
+                Log.e(TAG, "Watchdog falhou ao relançar a activity: ${e.message}")
+            }
+            
+            android.os.Process.killProcess(android.os.Process.myPid())
+            System.exit(10)
+        }
     }
 }

@@ -17,7 +17,7 @@ Fontes de Verdade:
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 import asyncio
-from datetime import datetime, timezone
+from backend.core import async_session_maker, CommandStatus, utcnow
 
 from backend.api.websockets import (
     manager,
@@ -29,8 +29,6 @@ from backend.api.websockets import (
 from backend.core.security import SECRET_KEY, ALGORITHM
 from jose import jwt, JWTError
 from sqlalchemy.future import select
-from backend.core.database import async_session_maker
-from backend.models.device import Device
 from backend.api.device_auth import verify_device_token
 import logging
 
@@ -196,34 +194,28 @@ async def websocket_device(websocket: WebSocket, device_id: str):
 
 async def _flush_pending_commands(websocket: WebSocket, device_id: str):
     """
-    Entrega todos os comandos (pending + sent) para o device logo após conectar.
-
-    Ordem: created_at ASC (garante execução na sequência correta).
-    Atualiza status para 'sent' após entrega bem-sucedida.
-
-    Idempotência:
-      - Device deve ignorar command_id já executado (verificando localmente).
-      - Backend nunca marca como 'sent' se já estiver em estado terminal
-        (completed/failed).
+    Entrega todos os comandos (PENDING + DISPATCHED) para o device logo após conectar.
+    Sincronizado com o pipeline Enterprise.
     """
     from backend.core.database import async_session_maker
     from backend.repositories.device_repo import DeviceRepository
     from backend.models.policy import CommandQueue
     from sqlalchemy import and_
 
-    logger.info(f"🔄 [Flush] Buscando comandos pendentes para device={device_id}")
+    logger.info(f"🔄 [Flush] Sincronizando comandos pendentes para device={device_id}")
 
     sent_count = 0
     try:
         async with async_session_maker() as db:
             repo = DeviceRepository(db)
 
+            # Busca comandos que ainda não expiraram ou falharam definitivamente
             result = await db.execute(
                 select(CommandQueue)
                 .where(
                     and_(
                         CommandQueue.device_id == device_id,
-                        CommandQueue.status.in_(["pending", "sent"]),
+                        CommandQueue.status.in_([CommandStatus.PENDING, CommandStatus.DISPATCHED]),
                     )
                 )
                 .order_by(CommandQueue.created_at.asc())
@@ -231,58 +223,31 @@ async def _flush_pending_commands(websocket: WebSocket, device_id: str):
             commands = result.scalars().all()
 
             for cmd in commands:
-                # Ajuste 6: Dead Letter Queue (DLQ) leve
-                if cmd.retry_count >= cmd.max_retries:
-                    cmd.status = "failed"
-                    cmd.error_code = "max_retries"
-                    cmd.error_message = f"Esgotou {cmd.max_retries} tentativas de envio"
-                    cmd.completed_at = datetime.now(timezone.utc)
+                # Verificação de retries excedidos (DLQ)
+                if (cmd.attempts or 0) >= cmd.max_retries:
+                    await repo.transition_status(cmd, CommandStatus.FAILED, metadata={"error": "max_retries_reached"})
                     await db.commit()
-                    
-                    await manager.broadcast_to_dashboards({
-                        "type": "CMD_FAILED",
-                        "device_id": cmd.device_id,
-                        "command_id": cmd.id,
-                        "action": cmd.command,
-                        "status": "failed",
-                        "error": cmd.error_message,
-                    })
-                    
-                    try:
-                        from backend.api.command_dispatcher import emit_command_metrics
-                        emit_command_metrics(cmd)
-                    except Exception:
-                        pass
-                    
-                    logger.warning(
-                        f"🚫 [DLQ] cmd_id={cmd.id} action={cmd.command} "
-                        f"→ failed_max_retries"
-                    )
                     continue
-
-
-                # Ajuste 4: Backoff simples — delay cresce com retry_count
-                # retry 0 → 0s, retry 1 → 5s, retry 2 → 15s
-                backoff_delays = [0, 5, 15]
-                delay = backoff_delays[min(cmd.retry_count, len(backoff_delays) - 1)]
-                if delay > 0:
-                    await asyncio.sleep(delay)
 
                 ws_payload = {
                     "type": "command",
-                    "command_id": cmd.id,
+                    "command_id": str(cmd.id),
                     "action": cmd.command,
                     "payload": cmd.payload or {},
                 }
+                
                 try:
                     await websocket.send_json(ws_payload)
-                    if cmd.status == "pending":
-                        await repo.update_device_command_status(
-                            cmd.id, "sent", sent_at=datetime.now(timezone.utc)
-                        )
-                    # Incrementa contador de retry e attempts
+                    
+                    # Se estava PENDING, movemos para DISPATCHED. 
+                    # Se já estava DISPATCHED, apenas atualizamos sent_at (retry/resume).
+                    if cmd.status == CommandStatus.PENDING:
+                        await repo.transition_status(cmd, CommandStatus.DISPATCHED)
+                    else:
+                        cmd.sent_at = utcnow()
+                    
+                    # Incrementamos retry_count a cada envio físico
                     cmd.retry_count = (cmd.retry_count or 0) + 1
-                    cmd.attempts = (cmd.attempts or 0) + 1
                     await db.commit()
 
                     sent_count += 1
@@ -412,161 +377,88 @@ async def _device_receiver(websocket: WebSocket, device_id: str):
 
 async def _handle_cmd_ack(device_id: str, data: dict):
     """
-    Processa ACK de comando: sent → acked.
-
-    Idempotente: se o comando já estiver em estado terminal (completed/failed),
-    ignora silenciosamente (o device pode reenviar ACK após reconnect).
+    Processa confirmação de transporte (ACK) do device. 
+    O device apenas diz: 'Recebi o comando'.
+    Mantemos em DISPATCHED ou apenas logamos, pois o pipeline oficial 
+    espera o resultado final (EXECUTED) para avançar.
     """
     command_id = data.get("command_id")
-    if not command_id:
-        logger.warning(f"[cmd_ack] cmd_ack sem command_id de device={device_id}")
-        return
+    if not command_id: return
 
     try:
         async with async_session_maker() as db:
-            from backend.repositories.device_repo import DeviceRepository
             from backend.models.policy import CommandQueue
-            repo = DeviceRepository(db)
-
-            # Ajuste 6: Validação de propriedade — garante que o comando pertence ao device
             row = await db.execute(
                 select(CommandQueue).where(
                     CommandQueue.id == command_id,
-                    CommandQueue.device_id == device_id,   # owner check
+                    CommandQueue.device_id == device_id
                 )
             )
             cmd = row.scalar_one_or_none()
-            if not cmd:
-                logger.warning(
-                    f"🚫 [cmd_ack] OWNERSHIP VIOLATION: cmd_id={command_id} "
-                    f"não pertence a device={device_id}"
-                )
-                return
-
-            # Idempotente: ignora se já está em estado terminal
-            if cmd.status in ("completed", "failed", "failed_no_ack", "failed_no_result"):
-                logger.debug(f"[cmd_ack] cmd_id={command_id} já terminal ({cmd.status}). Ignorando.")
-                return
-
-            cmd.status = "acked"
-            cmd.acked_at = datetime.now(timezone.utc)
-            await db.commit()
-
-        await manager.broadcast_to_dashboards({
-            "type": "CMD_ACKED",
-            "device_id": device_id,
-            "command_id": command_id,
-            "action": cmd.command,
-            "status": "acked",
-        })
-        logger.info(f"✅ [cmd_ack] cmd_id={command_id} acked por device={device_id}")
-
+            if cmd:
+                # Opcional: registrar que o transporte foi confirmado
+                logger.debug(f"📲 [Transport ACK] Device {device_id} confirmou recebimento de {cmd.id}")
     except Exception as e:
-        logger.error(f"[cmd_ack] Erro ao processar ack cmd_id={command_id}: {e}")
+        logger.error(f"[cmd_ack] Erro: {e}")
 
 
 async def _handle_cmd_result(device_id: str, data: dict):
     """
-    Processa resultado de execução: acked → completed | failed.
-
-    Idempotente: se cmd_id já estiver em estado terminal, ignora (evita duplicados
-    em caso de retry do device pós-reconnect).
-
-    Payload esperado:
-        { "type": "cmd_result", "command_id": int, "status": "success"|"failed", "error": str|null }
+    Processa resultado de execução do Android.
+    Pipeline: ... -> DISPATCHED -> EXECUTED -> ACKED
     """
     command_id = data.get("command_id")
     exec_status = data.get("status", "")
     error_msg = data.get("error")
 
     if not command_id or exec_status not in ("success", "failed"):
-        logger.warning(
-            f"[cmd_result] Payload inválido de device={device_id}: {data}"
-        )
         return
 
     try:
         async with async_session_maker() as db:
             from backend.repositories.device_repo import DeviceRepository
-            repo = DeviceRepository(db)
-
-            # ─ Idempotência: Não regredir estado terminal ─────────────────────
             from backend.models.policy import CommandQueue
+            repo = DeviceRepository(db)
+            
             row = await db.execute(
                 select(CommandQueue).where(
                     CommandQueue.id == command_id,
-                    CommandQueue.device_id == device_id,
+                    CommandQueue.device_id == device_id
                 )
             )
-            existing_cmd = row.scalar_one_or_none()
-
-            # Ajuste 6: Validação de propriedade explícita
-            if not existing_cmd:
-                logger.warning(
-                    f"🚫 [cmd_result] OWNERSHIP VIOLATION: cmd_id={command_id} "
-                    f"não pertence a device={device_id} ou não existe"
-                )
+            cmd = row.scalar_one_or_none()
+            
+            if not cmd or cmd.status in CommandStatus.TERMINAL_STATES:
                 return
 
-            # Idempotência: não regredir estado terminal (inclui sub-estados de falha)
-            TERMINAL_STATES = ("completed", "failed", "failed_no_ack", "failed_no_result")
-            if existing_cmd.status in TERMINAL_STATES:
-                logger.debug(
-                    f"[cmd_result] cmd_id={command_id} já em estado terminal "
-                    f"({existing_cmd.status}). Ignorando."
-                )
-                return
-
-            # ─ Atualizar status ───────────────────────────────────────────────
             if exec_status == "success":
-                ok = await repo.complete_command_secure(device_id, command_id)
-                final_status = "completed"
+                # Pipeline Atômico: EXECUTED (Android terminou) -> ACKED (Backend confirmou)
+                await repo.transition_status(cmd, CommandStatus.EXECUTED)
+                await repo.transition_status(cmd, CommandStatus.ACKED)
+                final_status = CommandStatus.ACKED
                 broadcast_type = "CMD_COMPLETED"
             else:
-                ok = await repo.fail_command_secure(
-                    device_id, command_id, error_msg or "Device reported failure"
-                )
-                final_status = "failed"
+                cmd.error_message = error_msg or "Android reported failure"
+                await repo.transition_status(cmd, CommandStatus.FAILED)
+                final_status = CommandStatus.FAILED
                 broadcast_type = "CMD_FAILED"
 
-        if not ok:
-            logger.warning(
-                f"[cmd_result] cmd_id={command_id} não encontrado ou não pertence a {device_id}"
-            )
-            return
+            await db.commit()
 
-        # Broadcast para o dashboard com estado final (payload mínimo)
-        action = existing_cmd.command if existing_cmd else "unknown"
-        await manager.broadcast_to_dashboards({
-            "type": broadcast_type,
-            "device_id": device_id,
-            "command_id": command_id,
-            "action": action,
-            "status": final_status,
-            "error": error_msg,
-        })
-        logger.info(
-            f"🏁 [cmd_result] cmd_id={command_id} {final_status} "
-            f"por device={device_id} | action={action}"
-        )
-
-        # Ajuste 2: Emite métricas de latência e telemetria
-        # Recarrega o cmd do DB para incluir timestamps atualizados
-        try:
-            async with async_session_maker() as db2:
-                from backend.models.policy import CommandQueue as CQ
-                row = await db2.execute(
-                    select(CQ).where(CQ.id == command_id)
-                )
-                updated_cmd = row.scalar_one_or_none()
-                if updated_cmd:
-                    from backend.api.command_dispatcher import emit_command_metrics
-                    emit_command_metrics(updated_cmd)
-        except Exception:
-            pass  # Métricas nunca devem quebrar o fluxo principal
+            # Notifica Dashboard
+            await manager.broadcast_to_dashboards({
+                "type": broadcast_type,
+                "device_id": device_id,
+                "command_id": str(cmd.id),
+                "action": cmd.command,
+                "status": final_status,
+                "error": error_msg
+            })
+            
+            logger.info(f"🏁 [cmd_result] {cmd.command} para {device_id} finalizado como {final_status}")
 
     except Exception as e:
-        logger.error(f"[cmd_result] Erro ao processar result cmd_id={command_id}: {e}")
+        logger.error(f"[cmd_result] Erro ao processar resultado: {e}")
 
 
 # ─── Server Ping (Heartbeat Bidirecional) ──────────────────────────────────────
