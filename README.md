@@ -145,5 +145,5 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 Proprietário — Todos os direitos reservados.
 
 <p align="center">
-  <sub>Desenvolvido pela Equipe de Segurança Elion · MDM Enterprise · Arquitetura Zero Trust</sub>
+  <sub>Desenvolvido por matheus · MDM Enterprise · Arquitetura Zero Trust</sub>
 </p>
