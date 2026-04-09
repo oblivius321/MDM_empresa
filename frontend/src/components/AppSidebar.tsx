@@ -9,11 +9,13 @@ import {
   Settings,
   ChevronRight,
   LogOut,
+  Box,
 } from 'lucide-react';
 
 const navItems = [
   { title: 'Dashboard', url: '/', icon: LayoutDashboard },
   { title: 'Dispositivos', url: '/devices', icon: Smartphone },
+  { title: 'Provisionamento', url: '/provisioning', icon: Box },
   { title: 'Políticas', url: '/policies', icon: Shield },
   { title: 'Logs', url: '/logs', icon: FileText },
   { title: 'Configurações', url: '/settings', icon: Settings },

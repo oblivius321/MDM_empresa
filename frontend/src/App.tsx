@@ -10,6 +10,7 @@ import Dashboard from "./pages/Dashboard";
 import Devices from "./pages/Devices";
 import DeviceDetail from "./pages/DeviceDetail";
 import Policies from "./pages/Policies";
+import Provisioning from "./pages/Provisioning";
 import Logs from "./pages/Logs";
 import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
@@ -37,6 +38,7 @@ const App = () => (
               <Route path="/devices" element={<Devices />} />
               <Route path="/devices/:id" element={<DeviceDetail />} />
               <Route path="/policies" element={<Policies />} />
+              <Route path="/provisioning" element={<Provisioning />} />
               <Route path="/logs" element={<Logs />} />
               <Route path="/settings" element={<Settings />} />
             </Route>

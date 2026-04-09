@@ -123,7 +123,7 @@ export function PolicyBuilder({ initialData, onSave, onCancel, isSubmitting }: P
       </div>
 
       {/* CONTENT */}
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 overflow-y-auto" style={{ maxHeight: 'calc(90vh - 72px)' }}>
         <div className="max-w-4xl mx-auto p-6 space-y-8">
           
           {errors.kiosk && (

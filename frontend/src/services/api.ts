@@ -338,6 +338,12 @@ export const enrollmentService = {
   listProfiles: () =>
     api.get<ProvisioningProfile[]>('/profiles'),
 
+  createProfile: (data: Partial<ProvisioningProfile>) =>
+    api.post<ProvisioningProfile>('/profiles', data),
+
+  updateProfile: (id: string, data: Partial<ProvisioningProfile>) =>
+    api.put<ProvisioningProfile>(`/profiles/${id}`, data),
+
   generateToken: (params: {
     profile_id: string;
     mode?: 'single' | 'batch';

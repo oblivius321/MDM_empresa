@@ -13,6 +13,32 @@ class MDMService:
         self.repo = repo
         self.redis = redis
 
+    # ─── Provisioning Profile Management ───────────────────────────────────────
+
+    async def create_profile(self, profile_data):
+        from backend.models.policy import ProvisioningProfile
+        profile = ProvisioningProfile(**profile_data.model_dump())
+        return await self.repo.create_profile(profile)
+
+    async def list_profiles(self):
+        return await self.repo.list_profiles()
+
+    async def get_profile(self, profile_id: uuid.UUID):
+        return await self.repo.get_profile(profile_id)
+
+    async def update_profile(self, profile_id: uuid.UUID, profile_data):
+        # Update logic handled or simple fetch and update
+        profile = await self.repo.get_profile(profile_id)
+        if not profile:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="Perfil não encontrado.")
+        for key, value in profile_data.model_dump(exclude_unset=True).items():
+            setattr(profile, key, value)
+        profile.version += 1
+        await self.repo.db.commit()
+        await self.repo.db.refresh(profile)
+        return profile
+
     async def enroll_device(self, device_id: str, name: str, device_type: str, profile_id: uuid.UUID, **kwargs) -> Tuple[Device, str]:
         """
         Realiza o enroll atômico de um dispositivo vinculado a um Profile obrigatório (SaaS architecture).
