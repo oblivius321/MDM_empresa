@@ -5,6 +5,7 @@ import time
 import base64
 import json
 import logging
+import uuid
 from typing import Dict, Optional, Tuple
 from .redis_service import RedisService
 
@@ -39,7 +40,7 @@ class AttestationService:
         
         # Armazena no Redis com status UNUSED (Anti-Replay) using tenant_id e request_id
         # Key schema: nonce:{tenant_id}:{request_id}
-        self.redis.client.setex(f"nonce:{tenant_id}:{request_id}", 300, json.dumps({
+        await self.redis.client.setex(f"nonce:{tenant_id}:{request_id}", 300, json.dumps({
             "device_id": device_id,
             "tenant_id": tenant_id,
             "nonce": nonce,
@@ -73,7 +74,7 @@ class AttestationService:
 
             # 3. Anti-Replay (Redis Multi-Tenant Check)
             nonce_key = f"nonce:{tenant_id}:{request_id}"
-            nonce_data_json = self.redis.client.get(nonce_key)
+            nonce_data_json = await self.redis.client.get(nonce_key)
             if not nonce_data_json:
                 raise ValueError("NONCE_NOT_FOUND")
                 
@@ -85,16 +86,16 @@ class AttestationService:
 
             # Mark as USED without deleting to avoid race conditions (TTL is kept)
             nonce_data["status"] = "USED"
-            ttl_left = self.redis.client.ttl(nonce_key)
+            ttl_left = await self.redis.client.ttl(nonce_key)
             if ttl_left > 0:
-                self.redis.client.setex(nonce_key, ttl_left, json.dumps(nonce_data))
+                await self.redis.client.setex(nonce_key, ttl_left, json.dumps(nonce_data))
 
         except Exception as e:
             self.logger.error(f"Attestation Blocked: {str(e)} for device {device_id}")
             return {"trust_score": 0, "status": "COMPROMISED", "reason": str(e)}
 
         # 4. Cache Check (Performance) vinculado à versão da engine
-        cached = self.redis.get_cached_verdict(device_id, policy_version=1) # Baseline version
+        cached = await self.redis.get_cached_verdict(device_id, policy_version=1) # Baseline version
         if cached:
             self.logger.info(f"Using cached verdict for {device_id}")
             return cached
@@ -114,7 +115,7 @@ class AttestationService:
         }
 
         # 7. Cache Result (10 min)
-        self.redis.cache_verdict(device_id, policy_version=1, verdict=result)
+        await self.redis.cache_verdict(device_id, policy_version=1, verdict=result)
         return result
 
     def _calculate_trust_score(self, verdict: Dict) -> int:

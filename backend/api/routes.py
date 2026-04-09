@@ -33,11 +33,14 @@ router = APIRouter()
 def get_repo(db: AsyncSession = Depends(get_db)) -> DeviceRepository:
     return DeviceRepository(db)
 
-def get_service(repo: DeviceRepository = Depends(get_repo)) -> MDMService:
-    return MDMService(repo)
-
 def get_redis() -> RedisService:
     return RedisService()
+
+def get_service(
+    repo: DeviceRepository = Depends(get_repo), 
+    redis: RedisService = Depends(get_redis)
+) -> MDMService:
+    return MDMService(repo, redis)
 
 def get_attestation(redis: RedisService = Depends(get_redis)) -> AttestationService:
     return AttestationService(redis)

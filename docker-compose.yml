@@ -26,6 +26,21 @@ services:
       timeout: 5s
       retries: 5
 
+  # ═══════ Redis ═══════════════════════════
+  redis:
+    image: redis:7-alpine
+    container_name: elion-mdm-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - elion-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   # ═══════ Backend FastAPI ═════════════════
   backend:
     build:
@@ -41,8 +56,12 @@ services:
       DEBUG: ${DEBUG:-True}
       ENVIRONMENT: ${ENVIRONMENT:-development}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://192.168.25.227:3000,http://192.168.25.227,http://192.168.25.227:5173}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     volumes:
       - ./backend:/app/backend

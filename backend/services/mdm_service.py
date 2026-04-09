@@ -4,12 +4,14 @@ from typing import Dict, List, Optional, Tuple
 from backend.repositories.device_repo import DeviceRepository
 from backend.models.device import Device
 from backend.models.policy import ProvisioningProfile, DevicePolicy, DeviceCommand
+from backend.services.redis_service import RedisService
 
 logger = logging.getLogger("mdm.service")
 
 class MDMService:
-    def __init__(self, repo: DeviceRepository):
+    def __init__(self, repo: DeviceRepository, redis: RedisService = None):
         self.repo = repo
+        self.redis = redis
 
     async def enroll_device(self, device_id: str, name: str, device_type: str, profile_id: uuid.UUID, **kwargs) -> Tuple[Device, str]:
         """
@@ -280,9 +282,8 @@ class MDMService:
             await self.enqueue_command(device_id, "LOCK", "SYSTEM_SLA", {"reason": "Compliance failure"})
             
             # Invalidação Ativa do Cache: Remove o trust rate para forçar nova validação no backend
-            from backend.services.redis_service import RedisService
-            redis = RedisService()
-            redis.invalidate_verdict_cache(device_id, policy.policy_version)
+            if self.redis:
+                await self.redis.invalidate_verdict_cache(device_id, policy.policy_version)
             
         return True
 
