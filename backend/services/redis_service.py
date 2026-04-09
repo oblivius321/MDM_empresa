@@ -68,3 +68,92 @@ class RedisService:
         if count == 1:
             await self.client.expire(key, window)
         return count
+
+    # ─── Enrollment Token Management (Enterprise QR) ──────────────────────────
+
+    async def store_enrollment_token(
+        self,
+        token: str,
+        profile_id: str,
+        tenant_id: str,
+        created_by: str,
+        mode: str = "single",
+        max_devices: int = 1,
+        ttl: int = 900,  # 15 minutos
+    ):
+        """
+        Armazena token de enrollment no Redis com metadados completos.
+        Modes: 'single' (1 device) ou 'batch' (N devices).
+        Usa status UNUSED→USED (mesmo padrão do attestation, sem delete).
+        """
+        key = f"enrollment_token:{token}"
+        data = {
+            "status": "UNUSED",
+            "profile_id": profile_id,
+            "tenant_id": tenant_id,
+            "created_by": created_by,
+            "mode": mode,
+            "max_devices": str(max_devices),
+            "used_count": "0",
+        }
+        await self.client.hset(key, mapping=data)
+        await self.client.expire(key, ttl)
+        self.logger.info(
+            f"Enrollment token stored: mode={mode}, max={max_devices}, ttl={ttl}s, by={created_by}"
+        )
+
+    async def validate_enrollment_token(self, token: str) -> Optional[dict]:
+        """
+        Valida e consome um enrollment token.
+        - Single: marca USED após primeiro uso.
+        - Batch: incrementa used_count; marca USED quando atinge max_devices.
+        Retorna os metadados (profile_id, tenant_id) se válido, None se inválido.
+        """
+        key = f"enrollment_token:{token}"
+        data = await self.client.hgetall(key)
+
+        if not data:
+            self.logger.warning(f"Enrollment token not found or expired: {token[:8]}...")
+            return None
+
+        if data.get("status") == "USED":
+            self.logger.warning(f"Enrollment token already fully used: {token[:8]}...")
+            return None
+
+        mode = data.get("mode", "single")
+        used_count = int(data.get("used_count", "0"))
+        max_devices = int(data.get("max_devices", "1"))
+
+        if mode == "single":
+            # Marca como USED (não deleta — mantém auditoria)
+            await self.client.hset(key, "status", "USED")
+            await self.client.hset(key, "used_count", "1")
+        elif mode == "batch":
+            new_count = used_count + 1
+            await self.client.hset(key, "used_count", str(new_count))
+            if new_count >= max_devices:
+                await self.client.hset(key, "status", "USED")
+                self.logger.info(f"Batch token fully consumed: {new_count}/{max_devices}")
+
+        self.logger.info(
+            f"Enrollment token validated: profile={data.get('profile_id')}, "
+            f"mode={mode}, usage={used_count + 1}/{max_devices}"
+        )
+
+        return {
+            "profile_id": data["profile_id"],
+            "tenant_id": data["tenant_id"],
+            "created_by": data["created_by"],
+            "mode": mode,
+            "used_count": used_count + 1,
+            "max_devices": max_devices,
+        }
+
+    async def get_enrollment_token_info(self, token: str) -> Optional[dict]:
+        """Retorna informações do token sem consumir (para debug/admin)."""
+        key = f"enrollment_token:{token}"
+        data = await self.client.hgetall(key)
+        if not data:
+            return None
+        ttl = await self.client.ttl(key)
+        return {**data, "ttl_remaining": ttl}

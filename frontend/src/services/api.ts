@@ -306,3 +306,43 @@ export const logService = {
   getAll: (params?: { device_id?: string; page?: number; size?: number }) =>
     api.get('/logs', { params }),
 };
+
+// ─── Profile & Enrollment Endpoints (Enterprise QR) ──────────────────────────
+
+export interface ProvisioningProfile {
+  id: string;
+  name: string;
+  kiosk_enabled: boolean;
+  allowed_apps: string[];
+  blocked_features: Record<string, boolean>;
+  config: Record<string, any>;
+  version: number;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface EnrollmentConfig {
+  enrollment_token: string;
+  api_url: string;
+  profile_name: string;
+  mode: 'single' | 'batch';
+  max_devices: number;
+  ttl_minutes: number;
+  expires_at: string;
+  admin_component: string;
+  apk_url: string;
+  apk_checksum: string;
+}
+
+export const enrollmentService = {
+  listProfiles: () =>
+    api.get<ProvisioningProfile[]>('/profiles'),
+
+  generateToken: (params: {
+    profile_id: string;
+    mode?: 'single' | 'batch';
+    max_devices?: number;
+    ttl_minutes?: number;
+  }) =>
+    api.post<EnrollmentConfig>('/enrollment/generate', null, { params }),
+};

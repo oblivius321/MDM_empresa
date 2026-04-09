@@ -89,31 +89,167 @@ async def update_profile(
 
 # ============= 🛡️ CAMADA 2: ENROLLMENT SEGMENTADO =============
 
+@router.post("/enrollment/generate", tags=["SaaS Admin"])
+@limiter.limit("10/minute")
+async def generate_enrollment_token(
+    request: Request,
+    profile_id: uuid.UUID,
+    mode: str = "single",
+    max_devices: int = 1,
+    ttl_minutes: int = 15,
+    current_user: User = Depends(get_current_user),
+    redis: RedisService = Depends(get_redis),
+    service: MDMService = Depends(get_service),
+):
+    """
+    Gera um token de enrollment dinâmico com TTL.
+    - mode: 'single' (1 device, padrão seguro) ou 'batch' (N devices)
+    - TTL: 5-60 minutos
+    - Token vinculado ao admin + tenant + profile
+    """
+    enroll_logger = logging.getLogger("mdm.enrollment")
+
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Somente administradores podem gerar tokens de enrollment.")
+
+    # Validação de inputs
+    if mode not in ("single", "batch"):
+        raise HTTPException(status_code=400, detail="Mode deve ser 'single' ou 'batch'.")
+    if mode == "batch" and (max_devices < 1 or max_devices > 500):
+        raise HTTPException(status_code=400, detail="max_devices deve ser entre 1 e 500.")
+    ttl_minutes = max(5, min(60, ttl_minutes))
+
+    # Verifica se o profile existe
+    profile = await service.get_profile(profile_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Perfil de provisionamento não encontrado.")
+
+    # Gerar token dinâmico
+    enrollment_token = str(uuid.uuid4())
+    ttl_seconds = ttl_minutes * 60
+    api_url = os.getenv("API_URL", f"{request.base_url.scheme}://{request.base_url.netloc}")
+
+    # Armazenar no Redis com metadados de auditoria
+    await redis.store_enrollment_token(
+        token=enrollment_token,
+        profile_id=str(profile_id),
+        tenant_id=str(getattr(current_user, 'tenant_id', 'default')),
+        created_by=str(current_user.email),
+        mode=mode,
+        max_devices=max_devices if mode == "batch" else 1,
+        ttl=ttl_seconds,
+    )
+
+    # Audit Log
+    await service.repo.log_event(
+        event_type="ENROLLMENT_TOKEN_GENERATED",
+        actor_type="admin",
+        actor_id=str(current_user.email),
+        severity="INFO",
+        payload={
+            "token_prefix": enrollment_token[:8],
+            "profile_id": str(profile_id),
+            "mode": mode,
+            "max_devices": max_devices if mode == "batch" else 1,
+            "ttl_minutes": ttl_minutes,
+            "ip": request.client.host if request.client else "unknown",
+        },
+        request=request,
+    )
+
+    enroll_logger.info(
+        f"🎫 Enrollment token gerado por {current_user.email}: "
+        f"mode={mode}, profile={profile_id}, ttl={ttl_minutes}min"
+    )
+
+    from datetime import timedelta
+    expires_at = datetime.datetime.utcnow() + timedelta(minutes=ttl_minutes)
+
+    return {
+        "enrollment_token": enrollment_token,
+        "api_url": api_url.rstrip('/') + "/api",
+        "profile_name": profile.name,
+        "mode": mode,
+        "max_devices": max_devices if mode == "batch" else 1,
+        "ttl_minutes": ttl_minutes,
+        "expires_at": expires_at.isoformat() + "Z",
+        "admin_component": "com.elion.mdm/com.elion.mdm.AdminReceiver",
+        "apk_url": api_url.rstrip('/') + "/static/elion-mdm.apk",
+        "apk_checksum": "736lG1ohTA1ggBcCXrmMqnJSENbdwBrrH-T2mp5mLs0",
+    }
+
+
 @router.post("/enroll", response_model=EnrollmentResponse, tags=["Device Ops"])
 @limiter.limit("5/minute")
 async def enroll_device(
     request: Request,
     req: DeviceEnrollRequest, 
-    service: MDMService = Depends(get_service)
+    service: MDMService = Depends(get_service),
+    redis: RedisService = Depends(get_redis),
 ):
     """
-    Novo Enrollment (SaaS Nível):
-    O dispositivo informa obrigatóriamente um `profile_id` válido para ser aceito.
+    Enrollment com token dinâmico (Enterprise).
+    O dispositivo envia o bootstrap_token recebido via QR Code.
+    O backend valida contra o Redis (UNUSED→USED) e associa ao profile correto.
     """
-    import logging
+    enroll_logger = logging.getLogger("mdm.enrollment")
     try:
-        expected_secret = os.getenv("ENROLLMENT_SECRET", "padrao-inseguro-troque-em-prod")
-        if req.bootstrap_secret != expected_secret:
-            logging.getLogger("error").warning(f"🚨 Tentativa de Enroll bloqueada para {req.device_id} (Secret inválido)")
-            raise HTTPException(status_code=403, detail="Autenticação de bootstrap falhou.")
+        # Validar token dinâmico no Redis
+        token_data = await redis.validate_enrollment_token(req.bootstrap_token)
+        
+        if not token_data:
+            enroll_logger.warning(
+                f"🚨 Enrollment REJEITADO para {req.device_id}: "
+                f"token inválido/expirado (IP: {request.client.host if request.client else 'unknown'})"
+            )
+            # Audit: tentativa bloqueada
+            await service.repo.log_event(
+                event_type="ENROLLMENT_REJECTED",
+                actor_type="device",
+                actor_id=req.device_id,
+                severity="WARNING",
+                payload={
+                    "reason": "invalid_or_expired_token",
+                    "ip": request.client.host if request.client else "unknown",
+                    "user_agent": request.headers.get("user-agent", "unknown"),
+                },
+                request=request,
+            )
+            raise HTTPException(status_code=403, detail="Token de enrollment inválido ou expirado.")
+
+        # Usar o profile_id do token (backend decide, não o device)
+        profile_id = uuid.UUID(token_data["profile_id"])
 
         # Realiza o enroll criando a associação com a política inicial
         device, token = await service.enroll_device(
             device_id=req.device_id,
             name=req.name,
             device_type=req.device_type,
-            profile_id=req.profile_id,
+            profile_id=profile_id,
             **req.extra_data if req.extra_data else {}
+        )
+
+        # Audit: enrollment bem-sucedido
+        await service.repo.log_event(
+            event_type="DEVICE_ENROLLED",
+            actor_type="device",
+            actor_id=req.device_id,
+            severity="INFO",
+            device_id=req.device_id,
+            payload={
+                "profile_id": str(profile_id),
+                "tenant_id": token_data.get("tenant_id", "default"),
+                "enrolled_by_admin": token_data.get("created_by", "unknown"),
+                "mode": token_data.get("mode", "single"),
+                "usage": f"{token_data.get('used_count', 1)}/{token_data.get('max_devices', 1)}",
+                "ip": request.client.host if request.client else "unknown",
+            },
+            request=request,
+        )
+
+        enroll_logger.info(
+            f"✅ Device {req.device_id} enrolled com sucesso via token dinâmico "
+            f"(profile={profile_id}, admin={token_data.get('created_by')})"
         )
         
         return {
@@ -127,7 +263,7 @@ async def enroll_device(
     except HTTPException:
         raise
     except Exception as e:
-        logging.getLogger("error").error(f"🔥 [ENROLL CRASH]: {str(e)}")
+        enroll_logger.error(f"🔥 [ENROLL CRASH]: {str(e)}")
         raise HTTPException(status_code=500, detail="Erro interno no processamento do registro.")
 
 

@@ -4,20 +4,23 @@ import { useDevices } from '@/hooks/useDevices';
 import { useMDMWebSocket } from '@/hooks/useMDMWebSocket';
 import { TopBar } from '@/components/TopBar';
 import { StatusBadge } from '@/components/StatusBadge';
-import { 
-  Search, 
-  ChevronLeft, 
-  ChevronRight, 
-  Filter, 
-  AlertCircle, 
-  Eye, 
-  Shield, 
-  ShieldAlert, 
-  ShieldCheck, 
-  ShieldOff, 
+import { EnrollmentModal } from '@/components/EnrollmentModal';
+import {
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  Filter,
+  AlertCircle,
+  Eye,
+  Shield,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldOff,
   Loader2,
   Infinity,
-  CheckCircle2
+  CheckCircle2,
+  Plus,
+  QrCode,
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -64,6 +67,7 @@ function ComplianceIndicator({ status }: { status: ComplianceStatus }) {
 export default function Devices() {
   const navigate = useNavigate();
   const [searchInput, setSearchInput] = useState('');
+  const [enrollmentOpen, setEnrollmentOpen] = useState(false);
   const {
     devices,
     loading,
@@ -107,6 +111,18 @@ export default function Devices() {
       />
 
       <div className="p-6 space-y-4">
+        {/* Botão Novo Dispositivo */}
+        <div className="flex items-center justify-between">
+          <div />
+          <button
+            id="new-device-button"
+            onClick={() => setEnrollmentOpen(true)}
+            className="flex items-center gap-2 px-4 py-2.5 text-sm font-bold bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-all shadow-lg shadow-primary/20"
+          >
+            <QrCode className="w-4 h-4" />
+            Novo Dispositivo
+          </button>
+        </div>
         {error && (
           <div className="flex items-center gap-3 px-4 py-3 rounded-md bg-status-locked/10 border border-status-locked/30 text-status-locked text-sm">
             <AlertCircle className="w-4 h-4 flex-shrink-0" />
@@ -271,6 +287,9 @@ export default function Devices() {
           </div>
         </div>
       </div>
+
+      {/* Enrollment Modal */}
+      <EnrollmentModal isOpen={enrollmentOpen} onClose={() => setEnrollmentOpen(false)} />
     </div>
   );
 }

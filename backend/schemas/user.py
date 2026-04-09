@@ -96,13 +96,14 @@ class PasswordResetToken(BaseModel):
 # ============= Enroll Seguro (com Bootstrap Secret) =============
 
 class DeviceEnrollRequest(BaseModel):
-    """Request para enroll seguro de dispositivo com Profile obrigatório."""
+    """Request para enroll seguro de dispositivo via token dinâmico (QR Code Enterprise)."""
     device_id: str = Field(..., min_length=1, max_length=255)
     name: str = Field(..., min_length=1, max_length=255)
     device_type: str = Field(..., min_length=1, max_length=50)
-    bootstrap_secret: str  # Secret compartilhado para validar enroll
-    profile_id: uuid.UUID # Perfil de provisionamento obrigatório (QR Code)
+    bootstrap_token: str  # Token dinâmico gerado pelo backend (TTL + uso único)
+    profile_id: Optional[uuid.UUID] = None  # Opcional — backend resolve via token
     extra_data: Optional[dict] = None
+
 
 class DeviceEnrollResponse(BaseModel):
     """Resposta do backend: dispositivo enrolled com token"""
