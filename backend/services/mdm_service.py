@@ -179,15 +179,16 @@ class MDMService:
         if payload:
             await self.repo.add_telemetry(device_id, payload)
 
-    async def enqueue_command(self, device_id: str, command_type: str, actor_id: str, payload: dict = None) -> DeviceCommand:
+    async def enqueue_command(self, device_id: str, command_type: str, actor_id: str, payload: dict = None, user_id: int = None) -> DeviceCommand:
         """Adiciona comando à fila segura e registra auditoria."""
         cmd = await self.repo.add_command(device_id, command_type, payload)
         await self.repo.log_event(
             event_type="COMMAND_CREATED",
             actor_type="admin",
             actor_id=actor_id,
+            user_id=user_id,
             severity="INFO",
-            metadata={"command_type": command_type, "device_id": device_id}
+            payload={"command_type": command_type, "device_id": device_id}
         )
         return cmd
 

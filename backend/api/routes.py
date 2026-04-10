@@ -145,6 +145,7 @@ async def generate_enrollment_token(
         event_type="ENROLLMENT_TOKEN_GENERATED",
         actor_type="admin",
         actor_id=str(current_user.email),
+        user_id=current_user.id,
         severity="INFO",
         payload={
             "token_prefix": enrollment_token[:8],
@@ -397,6 +398,14 @@ async def create_command(
     current_user: User = Depends(get_current_user)
 ):
     """Dispara um novo comando remoto (Admin only)."""
+    cmd = await service.enqueue_command(
+        device_id=device_id,
+        command_type=req.command,
+        actor_id=str(current_user.email),
+        payload=req.payload,
+        user_id=current_user.id
+    )
+    return cmd
 # ============= 🛡️ CAMADA EX: TRUST & INTEGRITY (Play Integrity) =============
 
 @router.get("/devices/nonce", response_model=NonceResponse, tags=["Device Ops"])

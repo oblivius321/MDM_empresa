@@ -297,15 +297,38 @@ class DeviceRepository:
         await self.db.commit()
         return telemetry
 
-    async def log_event(self, event_type: str, actor_id: str, actor_type: str = "system", severity: str = "INFO", device_id: uuid.UUID = None, payload: dict = None, request = None):
+    async def log_event(self, event_type: str, actor_id: str, actor_type: str = "system", severity: str = "INFO", device_id: uuid.UUID = None, payload: dict = None, request = None, user_id: int = None):
         """Helper para registrar auditoria com contexto HTTP opcional."""
+        from backend.models.audit_log import AuditLog, AuditActionEnum
+        
+        # Mapeamento de compatibilidade para o Enum de Auditoria
+        action_mapping = {
+            "ENROLLMENT_TOKEN_GENERATED": AuditActionEnum.ENROLLMENT_GENERATE,
+            "DEVICE_ENROLLED": AuditActionEnum.ENROLLMENT_COMPLETE,
+            "COMMAND_CREATED": AuditActionEnum.COMMAND_CREATE,
+            "COMMAND_ACKED": AuditActionEnum.COMMAND_UPDATE,
+            "COMMAND_EXECUTED": AuditActionEnum.COMMAND_UPDATE,
+            "COMMAND_FAILED": AuditActionEnum.COMMAND_UPDATE,
+            "COMMAND_VERIFIED": AuditActionEnum.COMMAND_UPDATE,
+            "COMMAND_VERIFICATION_FAILED": AuditActionEnum.COMMAND_UPDATE,
+            "COMPLIANCE_REPORT": AuditActionEnum.COMPLIANCE_CHECK,
+            "DEVICE_WIPE": AuditActionEnum.DEVICE_WIPE,
+            "DEVICE_LOCK": AuditActionEnum.DEVICE_LOCK,
+        }
+        
+        # Tenta mapear ou usa um fallback seguro
+        action = action_mapping.get(event_type, AuditActionEnum.COMMAND_UPDATE)
+        
         log = AuditLog(
+            action=action,
             event_type=event_type,
+            resource_type="device" if device_id else "system",
             severity=severity,
             actor_type=actor_type,
             actor_id=actor_id,
             device_id=device_id,
-            payload=payload or {}
+            details=payload or {},
+            user_id=user_id
         )
         
         if request:

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { QRCodeSVG } from 'qrcode.react';
+import { createPortal } from 'react-dom';
+import { QRCodeCanvas } from 'qrcode.react';
 import {
   enrollmentService,
   EnrollmentConfig,
@@ -120,22 +121,28 @@ export function EnrollmentModal({ isOpen, onClose }: EnrollmentModalProps) {
   const buildQrPayload = (): string => {
     if (!enrollmentData) return '';
 
-    // Payload alinhado com o padrão Android Enterprise Provisioning
-    const payload: Record<string, any> = {
-      'android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME':
-        enrollmentData.admin_component,
-      'android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_DOWNLOAD_LOCATION':
-        enrollmentData.apk_url,
-      'android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_CHECKSUM':
-        enrollmentData.apk_checksum,
-      'android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE': {
-        'bootstrap_token': enrollmentData.enrollment_token,
-        'api_url': enrollmentData.api_url,
-        'enrollment_mode': 'qr',
-      },
-    };
+    try {
+      const payload: Record<string, any> = {
+        'android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME':
+          enrollmentData.admin_component,
+        'android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_DOWNLOAD_LOCATION':
+          enrollmentData.apk_url,
+        'android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_CHECKSUM':
+          enrollmentData.apk_checksum,
+        'android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE': {
+          'bootstrap_token': enrollmentData.enrollment_token,
+          'api_url': enrollmentData.api_url,
+          'enrollment_mode': 'qr',
+        },
+      };
 
-    return JSON.stringify(payload);
+      const json = JSON.stringify(payload);
+      console.log('📡 [QR Debug] Payload gerado:', json);
+      return json;
+    } catch (err) {
+      console.error('❌ [QR Debug] Erro ao gerar payload:', err);
+      return 'ERROR';
+    }
   };
 
   const copyPayload = () => {
@@ -152,16 +159,36 @@ export function EnrollmentModal({ isOpen, onClose }: EnrollmentModalProps) {
 
   if (!isOpen) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+  return createPortal(
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 100,
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: '20px',
+      }}
+    >
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-background/80 backdrop-blur-sm"
+        className="bg-background/80 backdrop-blur-sm"
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
         onClick={onClose}
       />
 
-      {/* Modal */}
-      <div className="relative z-10 w-full max-w-lg mx-4 bg-card border border-border rounded-xl shadow-2xl animate-fade-in overflow-hidden">
+      <div
+        className="bg-card border border-border rounded-xl shadow-2xl animate-fade-in"
+        style={{
+          position: 'relative',
+          zIndex: 10,
+          width: '100%',
+          maxWidth: '32rem',
+          maxHeight: '90vh',
+          overflowY: 'auto',
+        }}
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-muted/30">
           <div className="flex items-center gap-3">
@@ -234,11 +261,10 @@ export function EnrollmentModal({ isOpen, onClose }: EnrollmentModalProps) {
                   <button
                     id="mode-single"
                     onClick={() => setMode('single')}
-                    className={`flex flex-col items-center gap-1.5 p-3 rounded-lg border text-sm font-medium transition-all ${
-                      mode === 'single'
+                    className={`flex flex-col items-center gap-1.5 p-3 rounded-lg border text-sm font-medium transition-all ${mode === 'single'
                         ? 'bg-primary/10 border-primary text-primary'
                         : 'bg-secondary border-border text-muted-foreground hover:border-primary/30'
-                    }`}
+                      }`}
                   >
                     <Smartphone className="w-5 h-5" />
                     <span>Único</span>
@@ -247,11 +273,10 @@ export function EnrollmentModal({ isOpen, onClose }: EnrollmentModalProps) {
                   <button
                     id="mode-batch"
                     onClick={() => setMode('batch')}
-                    className={`flex flex-col items-center gap-1.5 p-3 rounded-lg border text-sm font-medium transition-all ${
-                      mode === 'batch'
+                    className={`flex flex-col items-center gap-1.5 p-3 rounded-lg border text-sm font-medium transition-all ${mode === 'batch'
                         ? 'bg-primary/10 border-primary text-primary'
                         : 'bg-secondary border-border text-muted-foreground hover:border-primary/30'
-                    }`}
+                      }`}
                   >
                     <Layers className="w-5 h-5" />
                     <span>Lote</span>
@@ -320,43 +345,53 @@ export function EnrollmentModal({ isOpen, onClose }: EnrollmentModalProps) {
           )}
 
           {step === 'qr' && enrollmentData && (
-            <div className="space-y-5">
-              {/* QR Code */}
-              <div className="flex flex-col items-center">
-                <div className={`p-4 bg-white rounded-xl border-2 transition-colors ${
-                  countdown <= 60 ? 'border-amber-500 animate-pulse' : 'border-border'
-                } ${countdown <= 0 ? 'opacity-30 border-destructive' : ''}`}>
-                  <QRCodeSVG
-                    value={buildQrPayload()}
-                    size={240}
-                    level="M"
-                    includeMargin={false}
-                    bgColor="#ffffff"
-                    fgColor="#000000"
-                    imageSettings={{
-                      src: '/logo.png',
-                      height: 36,
-                      width: 36,
-                      excavate: true,
-                    }}
-                  />
+            <div className="space-y-5 w-full flex flex-col items-center justify-center">
+              {/* Bloco do QR Code */}
+              <div className="flex flex-col items-center justify-center w-full gap-3">
+                <div className="flex justify-center w-full">
+                  <div style={{ padding: '20px', backgroundColor: '#ffffff', borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', border: '1px solid #e4e4e7' }}>
+                    <QRCodeCanvas
+                      id="qr-code-canvas"
+                      value={buildQrPayload() || "https://elion-mdm.app"}
+                      size={220}
+                      level="M"
+                      includeMargin={false}
+                      bgColor="#ffffff"
+                      fgColor="#1a1a1a"
+                      style={{
+                        display: 'block',
+                        imageRendering: 'pixelated',
+                        filter: 'none'
+                      }}
+                    />
+                  </div>
                 </div>
 
-                {/* Countdown */}
-                <div className={`flex items-center gap-2 mt-3 px-3 py-1.5 rounded-full text-xs font-bold ${
-                  countdown <= 0
-                    ? 'bg-destructive/10 text-destructive'
-                    : countdown <= 60
-                    ? 'bg-amber-500/10 text-amber-500'
-                    : 'bg-primary/10 text-primary'
-                }`}>
+                {/* Contador */}
+                <div className="flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-bold bg-primary/10 text-primary border border-primary/20">
                   <Clock className="w-3.5 h-3.5" />
                   {countdown <= 0 ? 'EXPIRADO' : `Expira em ${formatCountdown(countdown)}`}
                 </div>
+
+                <button
+                  className="text-[10px] text-muted-foreground hover:underline"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    const canvas = document.getElementById('qr-code-canvas') as HTMLCanvasElement;
+                    if (canvas) {
+                      const link = document.createElement('a');
+                      link.download = 'qr.png';
+                      link.href = canvas.toDataURL();
+                      link.click();
+                    }
+                  }}
+                >
+                  Problemas com a imagem? Clique para baixar.
+                </button>
               </div>
 
               {/* Info Cards */}
-              <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="grid grid-cols-2 gap-2 text-xs w-full">
                 <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-secondary border border-border">
                   <Shield className="w-3.5 h-3.5 text-primary flex-shrink-0" />
                   <div>
@@ -417,6 +452,7 @@ export function EnrollmentModal({ isOpen, onClose }: EnrollmentModalProps) {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
