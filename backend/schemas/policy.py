@@ -13,6 +13,8 @@ class ProvisioningProfileBase(BaseModel):
     allowed_apps: List[str] = Field(default_factory=list, example=["com.elion.app", "com.android.settings"])
     blocked_features: Dict = Field(default_factory=dict, example={"camera": True, "usb_debug": True})
     config: Dict = Field(default_factory=dict, example={"wifi_ssid": "Elion_Corp", "auto_update": True})
+    policy_ids: List[int] = Field(default_factory=list, description="Lista de IDs de Políticas Enterprise associadas")
+
 
 class ProvisioningProfileCreate(ProvisioningProfileBase):
     """Schema para criação de um novo template de provisionamento."""
@@ -25,7 +27,9 @@ class ProvisioningProfileUpdate(BaseModel):
     allowed_apps: Optional[List[str]] = None
     blocked_features: Optional[Dict] = None
     config: Optional[Dict] = None
+    policy_ids: Optional[List[int]] = None
     is_active: Optional[bool] = None
+
 
 class ProvisioningProfileResponse(ProvisioningProfileBase):
     """Resposta detalhada do template mestre."""
@@ -101,9 +105,12 @@ class CommandStatusUpdate(BaseModel):
 
 class PolicyConfigCreate(BaseModel):
     name: str
+    description: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
     config: Dict
     priority: int = 0
     scope: str = "global"
+
 
 class PolicyConfigUpdate(BaseModel):
     name: Optional[str] = None

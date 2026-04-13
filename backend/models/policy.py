@@ -20,12 +20,11 @@ class ProvisioningProfile(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String, index=True)
     
-    # Config inicial
+    # Config inicial (Fallback)
     kiosk_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    allowed_apps: Mapped[dict] = mapped_column(JSON, default=list) # JSON array: ["pkg1", "pkg2"]
-    blocked_features: Mapped[dict] = mapped_column(JSON, default=dict) # ex: {"camera": true, "usb_debug": true}
+    allowed_apps: Mapped[dict] = mapped_column(JSON, default=list) # ["pkg1", "pkg2"]
+    blocked_features: Mapped[dict] = mapped_column(JSON, default=dict)
     
-    # Wi-Fi, configs adicionais enterprise
     config: Mapped[dict] = mapped_column(JSON, default=dict)
 
     # Versionamento e Soft Delete
@@ -36,9 +35,31 @@ class ProvisioningProfile(Base):
     
     # Relationships
     devices: Mapped[List["DevicePolicy"]] = relationship("DevicePolicy", back_populates="profile")
+    policies: Mapped[List["ProvisioningProfilePolicy"]] = relationship(
+        "ProvisioningProfilePolicy", back_populates="profile", cascade="all, delete-orphan"
+    )
 
     def __repr__(self):
         return f"<ProvisioningProfile(name='{self.name}', v={self.version})>"
+
+
+class ProvisioningProfilePolicy(Base):
+    """
+    Tabela de junção M:N entre Profiles e Policies Enterprise.
+    Suporta priorização explícita (Maior número = Maior prioridade).
+    """
+    __tablename__ = "provisioning_profile_policies"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    profile_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("provisioning_profiles.id"), index=True)
+    policy_id: Mapped[int] = mapped_column(Integer, ForeignKey("policies_v2.id"), index=True)
+    
+    priority: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Relationships
+    profile: Mapped["ProvisioningProfile"] = relationship("ProvisioningProfile", back_populates="policies")
+    policy: Mapped["Policy"] = relationship("Policy")
+
 
 
 class DevicePolicy(Base):
@@ -155,6 +176,9 @@ class Policy(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tags: Mapped[dict] = mapped_column(JSON, default=list) # ["security", "apps"]
+    
     config: Mapped[dict] = mapped_column(JSON, default=dict)
     priority: Mapped[int] = mapped_column(Integer, default=0, index=True)
     scope: Mapped[str] = mapped_column(String(50), default="global", index=True) # global, group, device
@@ -164,6 +188,7 @@ class Policy(Base):
     
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, onupdate=datetime.utcnow)
+
 
 class PolicyState(Base):
     """

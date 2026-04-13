@@ -16,9 +16,26 @@ class MDMService:
     # ─── Provisioning Profile Management ───────────────────────────────────────
 
     async def create_profile(self, profile_data):
-        from backend.models.policy import ProvisioningProfile
-        profile = ProvisioningProfile(**profile_data.model_dump())
-        return await self.repo.create_profile(profile)
+        from backend.models.policy import ProvisioningProfile, ProvisioningProfilePolicy
+        # 1. Create Core Profile
+        data = profile_data.model_dump(exclude={"policy_ids"})
+        profile = ProvisioningProfile(**data)
+        created_profile = await self.repo.create_profile(profile)
+        
+        # 2. Add Policy Associations
+        policy_ids = getattr(profile_data, "policy_ids", [])
+        if policy_ids:
+            for idx, pid in enumerate(policy_ids):
+                assoc = ProvisioningProfilePolicy(
+                    profile_id=created_profile.id,
+                    policy_id=pid,
+                    priority=idx * 10 # Default spacing
+                )
+                self.repo.db.add(assoc)
+            await self.repo.db.commit()
+            
+        return created_profile
+
 
     async def list_profiles(self):
         return await self.repo.list_profiles()
@@ -27,17 +44,43 @@ class MDMService:
         return await self.repo.get_profile(profile_id)
 
     async def update_profile(self, profile_id: uuid.UUID, profile_data):
-        # Update logic handled or simple fetch and update
+        from backend.models.policy import ProvisioningProfilePolicy
+        from sqlalchemy import delete
+        
         profile = await self.repo.get_profile(profile_id)
         if not profile:
             from fastapi import HTTPException
             raise HTTPException(status_code=404, detail="Perfil não encontrado.")
-        for key, value in profile_data.model_dump(exclude_unset=True).items():
+            
+        # 1. Update Basic Fields
+        update_dict = profile_data.model_dump(exclude_unset=True, exclude={"policy_ids"})
+        for key, value in update_dict.items():
             setattr(profile, key, value)
+            
+        # 2. Update Policy Associations (Full replace strategy for simplicity)
+        if profile_data.policy_ids is not None:
+            # Remove old
+            await self.repo.db.execute(
+                delete(ProvisioningProfilePolicy).where(ProvisioningProfilePolicy.profile_id == profile_id)
+            )
+            # Add new
+            for idx, pid in enumerate(profile_data.policy_ids):
+                assoc = ProvisioningProfilePolicy(
+                    profile_id=profile_id,
+                    policy_id=pid,
+                    priority=idx * 10
+                )
+                self.repo.db.add(assoc)
+        
         profile.version += 1
+        
+        # 3. Surgical Invalidation (Sênior - Avoid Sync Storms)
+        await self.repo.mark_profile_devices_outdated(profile_id)
+        
         await self.repo.db.commit()
         await self.repo.db.refresh(profile)
         return profile
+
 
     async def enroll_device(self, device_id: str, name: str, device_type: str, profile_id: uuid.UUID, **kwargs) -> Tuple[Device, str]:
         """
@@ -77,40 +120,88 @@ class MDMService:
                 metadata[k] = v
         device_data["metadata_json"] = metadata
 
-        # 4. Upsert do Device
+        from backend.services.policy_engine import (
+            merge_policies, compute_effective_hash, compute_hash, validate_policy_structure
+        )
+        import time
+
+        # 4. Upsert do Device (Atomic handshake)
         device = await self.repo.get(device_id)
         if device:
-             await self.repo.update_device(device_id, device_data)
+             await self.repo.update_device(device_id, {**device_data, "policy_outdated": False})
         else:
-             device = Device(**device_data)
+             device = Device(**device_data, policy_outdated=False)
              await self.repo.add(device)
 
-        # 5. Materialização da Policy (Cópia profunda do template para o estado do device)
-        policy_hash = self.repo.generate_policy_hash(profile.config, profile.allowed_apps)
+        # ─── Pipeline de Composição de Políticas (Fase 3 Enterprise Hardened) ───
+        start_time = time.perf_counter()
         
-        existing_policy = await self.repo.get_device_policy(device_id)
+        # Camada 2: Global Policies
+        global_policies = await self.repo.get_global_policies()
+        
+        # Camada 3: Profile Policies (Junction table)
+        profile_policies = await self.repo.get_profile_policies(profile_id)
+        
+        # Merge de Camadas 2 e 3 (já ordenadas por priority no repo)
+        all_ordered_layers = [
+            {"config": p.config, "priority": p.priority, "scope": p.scope, "version": p.version}
+            for p in (global_policies + profile_policies)
+        ]
+        
+        # Camada 4: Profile Static (Fallback)
+        profile_static = {
+            "kiosk_enabled": profile.kiosk_enabled,
+            "allowed_apps": profile.allowed_apps,
+            "blocked_features": profile.blocked_features,
+            "config": profile.config
+        }
+        
+        merged_config = merge_policies(all_ordered_layers, profile_static)
+        
+        # ─── Senior Hardening: Validation & Size Limits ───
+        validate_policy_structure(merged_config)
+        
+        # 6. Cálculo de Versão e Hash (Determinístico)
+        max_version = max([p.version for p in (global_policies + profile_policies)] + [profile.version, 1])
+        policy_hash = compute_hash(merged_config)
+        effective_hash = compute_effective_hash(max_version, merged_config)
+
+        # 7. Materialização no DevicePolicy (Concurrency Lock)
+        # P2.0 Hardening: SELECT FOR UPDATE SKIP LOCKED
+        existing_policy = await self.repo.get_device_policy(device_id, for_update=True)
+        
         if existing_policy:
             existing_policy.profile_id = profile_id
-            existing_policy.kiosk_enabled = profile.kiosk_enabled
-            existing_policy.allowed_apps = profile.allowed_apps
-            existing_policy.blocked_features = profile.blocked_features
-            existing_policy.config = profile.config
-            existing_policy.policy_version = profile.version
-            existing_policy.policy_hash = policy_hash
-            existing_policy.policy_outdated = False
+            existing_policy.config = merged_config
+            existing_policy.policy_version = max_version
+            existing_policy.policy_hash = effective_hash
+            # Sincroniza campos legados para compatibilidade
+            existing_policy.kiosk_enabled = merged_config.get("kiosk", {}).get("enabled", profile.kiosk_enabled)
+            existing_policy.allowed_apps = merged_config.get("allowed_apps", profile.allowed_apps)
         else:
             new_policy = DevicePolicy(
                 device_id=device_id,
                 profile_id=profile_id,
-                kiosk_enabled=profile.kiosk_enabled,
-                allowed_apps=profile.allowed_apps,
-                blocked_features=profile.blocked_features,
-                config=profile.config,
-                policy_version=profile.version,
-                policy_hash=policy_hash,
-                policy_outdated=False
+                config=merged_config,
+                policy_version=max_version,
+                policy_hash=effective_hash,
+                kiosk_enabled=merged_config.get("kiosk", {}).get("enabled", profile.kiosk_enabled),
+                allowed_apps=merged_config.get("allowed_apps", profile.allowed_apps),
+                blocked_features=merged_config.get("restrictions", profile.blocked_features)
             )
             self.repo.db.add(new_policy)
+
+        # ─── Structured Telemetry (Senior Observability) ───
+        duration_ms = int((time.perf_counter() - start_time) * 1000)
+        logger.info({
+            "event": "policy_merge",
+            "device_id": device_id,
+            "policy_hash": policy_hash,
+            "policy_version": max_version,
+            "layers": [p.scope for p in (global_policies + profile_policies)],
+            "duration_ms": duration_ms
+        })
+
         
         # Commit atômico de Device + Policy
         await self.repo.db.commit()
@@ -150,27 +241,52 @@ class MDMService:
 
     async def sync_policy(self, device_id: str, current_hash: str, current_version: int) -> Optional[Dict]:
         """
-        Handshake de sincronização de políticas. 
-        Implementa detecção de drift via HASH e flag de 'outdated'.
+        Handshake de sincronização de políticas (Fase 4 - Enterprise).
+        Implementa detecção de drift via Versão (Server > Device) e HASH.
         """
+        from backend.models.device import Device
+        device = await self.repo.get(device_id)
         policy = await self.repo.get_device_policy(device_id)
-        if not policy:
+        
+        if not device or not policy:
             return None
         
-        # Drift: Hash divergente ou explicitamente marcado para atualização pelo Admin
-        has_drift = (policy.policy_hash != current_hash) or (policy.policy_version != current_version)
+        # 1. Verificação de Versão Crítica (Server-side Truth)
+        server_version = policy.policy_version
+        server_hash = policy.policy_hash
         
-        if policy.policy_outdated or has_drift:
-            return {
-                "version": policy.policy_version,
-                "hash": policy.policy_hash,
+        # 2. Avaliação de Drift / Outdated
+        needs_sync = (
+            device.policy_outdated or 
+            server_version > current_version or 
+            server_hash != current_hash
+        )
+        
+        if needs_sync:
+            # 3. Cache Check (Opcional - Redis)
+            if self.redis:
+                 cached = await self.redis.get(f"policy_cache:{server_hash}")
+                 if cached: return cached
+
+            sync_payload = {
+                "version": server_version,
+                "hash": server_hash,
+                "config": policy.config,
+                # Compatibilidade legada
                 "kiosk_enabled": policy.kiosk_enabled,
                 "allowed_apps": policy.allowed_apps,
                 "blocked_features": policy.blocked_features,
-                "config": policy.config
             }
+
+            # 4. Limpar flag outdated pós-sync
+            if device.policy_outdated:
+                await self.repo.update_device(device_id, {"policy_outdated": False})
+                await self.repo.db.commit()
+
+            return sync_payload
         
         return None # Device em conformidade total
+
 
     async def process_checkin(self, device_id: str, payload: dict):
         """Atualiza batimento cardíaco e telemetria profunda."""

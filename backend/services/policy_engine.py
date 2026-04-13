@@ -19,6 +19,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("policy_engine")
 
+# ─── Hard Limits (Enterprise Scaling) ────────────────────────────────────────
+MAX_ALLOWED_APPS = 100
+MAX_POLICY_SIZE_KB = 64
+
+
 # ─── Campos voláteis removidos antes do hash ─────────────────────────────────
 # Estes campos mudam constantemente e não representam drift real.
 VOLATILE_FIELDS = frozenset({
@@ -38,6 +43,32 @@ DRIFT_CATEGORIES = {
     "password_requirements": "apply_password_policy",
     "wifi_config": "apply_wifi_config",
 }
+
+# ─── System Defaults (Camada 1 - Base) ───────────────────────────────────────
+SYSTEM_DEFAULTS = {
+    "kiosk": {
+        "enabled": False,
+        "mode": "unlocked",
+        "show_settings": True,
+        "show_status_bar": True
+    },
+    "restrictions": {
+        "camera_disabled": False,
+        "usb_debug_disabled": False,
+        "factory_reset_disabled": False,
+        "install_unknown_sources_disabled": True
+    },
+    "allowed_apps": [
+        "com.elion.mdm",
+        "com.android.settings",
+        "com.google.android.apps.docs"
+    ],
+    "config": {
+        "checkin_interval_minutes": 15,
+        "log_level": "INFO"
+    }
+}
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -66,17 +97,18 @@ def _strip_volatile(data: dict) -> dict:
 
 def to_canonical_json(data: dict) -> str:
     """
-    Converte dict para JSON canônico determinístico.
+    Converte dict para JSON canônico determinístico (Estrito).
 
     Regras de normalização:
       1. sort_keys=True recursivo
       2. Remove campos null
       3. Remove campos voláteis (uptime, battery, etc.)
       4. Ordena listas de strings alfabeticamente
-      5. Separadores sem espaço (compacto)
+      5. Separadores compactos sem espaço (",", ":") -> CRÍTICO PARA HASH
     """
     stripped = _strip_volatile(data)
     return json.dumps(stripped, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
 
 
 def compute_hash(data: dict) -> str:
@@ -103,12 +135,12 @@ def compute_effective_hash(version: int, merged_config: dict) -> str:
 
 def _deep_merge_two(base: dict, override: dict) -> dict:
     """
-    Merge profundo de dois dicts.
+    Merge profundo estratégico (Nível Enterprise).
 
     Regras:
-      - Chaves únicas (str, int, bool): override sobrescreve base.
+      - Chaves únicas: override sobrescreve base.
       - Dicts internos: merge recursivo.
-      - Listas (apps): union sem duplicatas, ordenado.
+      - Listas (Apps/Tags): UNION mantendo ordem e removendo duplicatas.
     """
     result = deepcopy(base)
 
@@ -120,10 +152,9 @@ def _deep_merge_two(base: dict, override: dict) -> dict:
             if isinstance(existing, dict) and isinstance(value, dict):
                 result[key] = _deep_merge_two(existing, value)
 
-            # List + List → union sem duplicatas
+            # List + List → Strategic Union (dict.fromkeys trick for order preservation)
             elif isinstance(existing, list) and isinstance(value, list):
-                merged_list = list(dict.fromkeys(existing + value))  # preserva ordem + dedup
-                result[key] = sorted(merged_list) if merged_list and isinstance(merged_list[0], str) else merged_list
+                result[key] = list(dict.fromkeys(existing + value))
 
             # Scalar → override vence
             else:
@@ -134,36 +165,86 @@ def _deep_merge_two(base: dict, override: dict) -> dict:
     return result
 
 
-def merge_policies(policies: List[dict]) -> dict:
+
+def merge_policies(policies: List[dict], profile_static: dict = None) -> dict:
     """
-    Faz o merge de múltiplas policies respeitando scope e priority.
+    Pipeline de Composição de Políticas (Nível Enterprise).
 
-    Parâmetro: lista de dicts com {"config": {}, "priority": int, "scope": str}
-    Retorno: Master Profile JSON (o estado desejado final do device).
-
-    Ordem de merge:
-      1. Ordena por scope (global < group < device)
-      2. Dentro do mesmo scope, ordena por priority ASC
-      3. Merge sequencial: cada policy sobrescreve a anterior
-
-    Resultado: policy de maior scope + maior priority tem a palavra final.
+    Order (Bottom to Top):
+      1. System Defaults (Base)
+      2. Global Policies (Sorted by Priority)
+      3. Profile Policies (Sorted by Priority)
+      4. Profile Static Config (Fallback only for missing keys)
     """
-    if not policies:
-        return {}
+    # 1. Start with System Defaults
+    merged = deepcopy(SYSTEM_DEFAULTS)
 
-    # Ordena: primeiro por scope (global→group→device), depois por priority ASC
-    sorted_policies = sorted(
-        policies,
-        key=lambda p: (SCOPE_ORDER.get(p.get("scope", "global"), 0), p.get("priority", 0))
-    )
-
-    merged = {}
-    for policy in sorted_policies:
-        config = policy.get("config", {})
+    # 2 & 3. Merge Global and Profile Policies
+    # Assumimos que a lista 'policies' já foi filtrada e ordenada pelo repo
+    for p in policies:
+        config = p.get("config", {})
         if config:
             merged = _deep_merge_two(merged, config)
 
+    # 4. Profile Static Fallback (No overwrite)
+    if profile_static:
+        static_config = _normalize_profile_static(profile_static)
+        for key, value in static_config.items():
+            if key not in merged or not merged[key]:
+                 merged[key] = deepcopy(value)
+            elif isinstance(merged[key], dict) and isinstance(value, dict):
+                 # Merge recursive fallback for sub-keys
+                 for sub_k, sub_v in value.items():
+                     if sub_k not in merged[key]:
+                         merged[key][sub_k] = deepcopy(sub_v)
+
     return merged
+
+
+def validate_policy_structure(policy: dict):
+    """
+    Validador estrito de estrutura e limites (Senior Hardening).
+    Evita que configurações inválidas cheguem aos dispositivos Android.
+    """
+    if not isinstance(policy, dict):
+        raise ValueError("Policy must be a dictionary")
+
+    # 1. Check Payload Size
+    raw_size = len(json.dumps(policy))
+    if raw_size > MAX_POLICY_SIZE_KB * 1024:
+        raise ValueError(f"Policy payload too large: {raw_size/1024:.2f}KB (Max: {MAX_POLICY_SIZE_KB}KB)")
+
+    # 2. Type Checking: Kiosk
+    kiosk = policy.get("kiosk", {})
+    if not isinstance(kiosk, dict):
+        raise ValueError("'kiosk' configuration must be an object")
+
+    # 3. Type Checking & Limits: Allowed Apps
+    apps = policy.get("allowed_apps", [])
+    if not isinstance(apps, list):
+        raise ValueError("'allowed_apps' must be a list of strings")
+    
+    if len(apps) > MAX_ALLOWED_APPS:
+        raise ValueError(f"Too many allowed apps: {len(apps)} (Max: {MAX_ALLOWED_APPS})")
+
+    # 4. Type Checking: Restrictions
+    restrictions = policy.get("restrictions", {})
+    if not isinstance(restrictions, dict):
+        raise ValueError("'restrictions' must be an object")
+
+
+def _normalize_profile_static(profile: dict) -> dict:
+
+    """Normaliza campos legados do Profile para a estrutura sênior."""
+    return {
+        "kiosk": {
+            "enabled": profile.get("kiosk_enabled", False)
+        },
+        "allowed_apps": profile.get("allowed_apps", []),
+        "restrictions": profile.get("blocked_features", {}),
+        "config": profile.get("config", {})
+    }
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

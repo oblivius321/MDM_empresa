@@ -316,10 +316,20 @@ export interface ProvisioningProfile {
   allowed_apps: string[];
   blocked_features: Record<string, boolean>;
   config: Record<string, any>;
+  policy_ids: number[]; // IDs das políticas enterprise vinculadas
   version: number;
   is_active: boolean;
   created_at: string;
 }
+
+export interface MergedPolicyPreview {
+  profile_id: string;
+  profile_name: string;
+  layers_applied: { name: string; priority: number; scope?: string }[];
+  merged_config: any;
+  hash: string;
+}
+
 
 export interface EnrollmentConfig {
   enrollment_token: string;
@@ -344,6 +354,9 @@ export const enrollmentService = {
   updateProfile: (id: string, data: Partial<ProvisioningProfile>) =>
     api.put<ProvisioningProfile>(`/profiles/${id}`, data),
 
+  previewProfile: (id: string) =>
+    api.get<MergedPolicyPreview>(`/profiles/${id}/preview`),
+
   generateToken: (params: {
     profile_id: string;
     mode?: 'single' | 'batch';
@@ -352,3 +365,4 @@ export const enrollmentService = {
   }) =>
     api.post<EnrollmentConfig>('/enrollment/generate', null, { params }),
 };
+

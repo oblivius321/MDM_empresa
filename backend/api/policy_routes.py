@@ -43,6 +43,13 @@ async def create_policy(
     from backend.models.policy import Policy
 
     async with async_session_maker() as db:
+        from backend.services.policy_engine import validate_policy_structure
+        # Hardening: Validação estrita antes de persistir
+        try:
+            validate_policy_structure(data.config)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
         policy = Policy(
             name=data.name,
             config=data.config,
@@ -55,11 +62,19 @@ async def create_policy(
         await db.commit()
         await db.refresh(policy)
 
-        logger.info(
-            f"📋 [Policy] Criada: id={policy.id} name='{policy.name}' "
-            f"scope={policy.scope} by={current_user.email}"
+        # Audit Log Enterprise
+        from backend.repositories.device_repo import DeviceRepository
+        repo = DeviceRepository(db)
+        await repo.log_event(
+            event_type="POLICY_CREATED",
+            actor_type="admin",
+            actor_id=current_user.email,
+            severity="INFO",
+            payload={"id": str(policy.id), "name": policy.name}
         )
+
         return policy
+
 
 
 @router.get("/policies/v2", response_model=List[PolicyConfigResponse])
@@ -119,18 +134,19 @@ async def update_policy(
     from backend.models.policy import Policy
     from sqlalchemy.future import select
 
-    async with async_session_maker() as db:
-        result = await db.execute(
-            select(Policy).where(Policy.id == policy_id)
-        )
-        policy = result.scalar_one_or_none()
-        if not policy:
-            raise HTTPException(status_code=404, detail="Policy not found")
+        from backend.services.policy_engine import validate_policy_structure
+        from backend.repositories.device_repo import DeviceRepository
+        repo = DeviceRepository(db)
 
         # Atualiza campos fornecidos
         if data.name is not None:
             policy.name = data.name
         if data.config is not None:
+            # Senior Hardening: Valida schema e limites (64KB / 100 apps)
+            try:
+                validate_policy_structure(data.config)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
             policy.config = data.config
         if data.priority is not None:
             policy.priority = data.priority
@@ -139,17 +155,23 @@ async def update_policy(
         if data.is_active is not None:
             policy.is_active = data.is_active
 
-        # Incrementa versão (invalida caches e desbloqueia failed_loop)
-        policy.version += 1
+        # Atomic Version Bump (Anti-Race Condition)
+        # P2.0 Hardening: SET version = version + 1 RETURNING version
+        new_version = await repo.increment_policy_version(policy_id)
+        policy.version = new_version
         policy.updated_at = datetime.now(timezone.utc)
 
         await db.commit()
         await db.refresh(policy)
 
-        logger.info(
-            f"📝 [Policy] Atualizada: id={policy.id} v={policy.version} "
-            f"by={current_user.email}"
+        await repo.log_event(
+            event_type="POLICY_UPDATED",
+            actor_type="admin",
+            actor_id=current_user.email,
+            severity="INFO",
+            payload={"id": str(policy.id), "version": policy.version}
         )
+
 
         # Trigger re-enforcement para todos os devices vinculados
         await _trigger_re_enforcement(policy.id)
@@ -324,6 +346,82 @@ async def get_device_compliance(
     from backend.services.drift_detector import evaluate_compliance
     result = await evaluate_compliance(device_id)
     return result
+
+
+@router.get("/profiles/{profile_id}/preview", tags=["Policies Enterprise"])
+async def preview_profile_merged_policy(
+    profile_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Retorna o Master Profile (Merged JSON) resultante das 5 camadas.
+    Útil para o Config Preview no frontend.
+    """
+    from backend.core.database import async_session_maker
+    from backend.repositories.device_repo import DeviceRepository
+    from backend.services.mdm_service import MDMService
+    from backend.services.policy_engine import merge_policies, compute_hash
+    import uuid as uuid_pkg
+
+        # Security Hardening: Admin access only
+        if not current_user.is_admin:
+             raise HTTPException(status_code=403, detail="Acesso restrito a administradores.")
+
+        repo = DeviceRepository(db)
+        
+        # 1. Fetch Layers
+        profile = await repo.get_profile(profile_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail="Profile not found")
+            
+        global_policies = await repo.get_global_policies()
+        profile_policies = await repo.get_profile_policies(profile_id)
+        
+        all_ordered_layers = [
+            {
+                "id": p.id,
+                "name": p.name,
+                "config": p.config, 
+                "priority": p.priority, 
+                "scope": p.scope, 
+                "version": p.version
+            }
+            for p in (global_policies + profile_policies)
+        ]
+        
+        profile_static = {
+            "kiosk_enabled": profile.kiosk_enabled,
+            "allowed_apps": profile.allowed_apps,
+            "blocked_features": profile.blocked_features,
+            "config": profile.config
+        }
+        
+        # 2. Merge de Auditoria
+        merged_config = merge_policies(all_ordered_layers, profile_static)
+        policy_hash = compute_hash(merged_config)
+        
+        # 3. Mandatory Audit Log (Enterprise Compliance)
+        await repo.log_event(
+            event_type="POLICY_PREVIEW",
+            actor_type="admin",
+            actor_id=current_user.email,
+            severity="INFO",
+            payload={"profile_id": str(profile_id), "hash": policy_hash}
+        )
+
+        return {
+            "profile_id": profile_id,
+            "profile_name": profile.name,
+            "layers_applied": [
+                {"name": "System Defaults", "priority": -1},
+                *[{"name": l["name"], "priority": l["priority"], "scope": l["scope"]} for l in all_ordered_layers],
+                {"name": "Profile Static Fallback", "priority": -2}
+            ],
+            "merged_config": merged_config,
+            "hash": policy_hash
+        }
+
+
 
 
 @router.post("/devices/{device_id}/state-report")

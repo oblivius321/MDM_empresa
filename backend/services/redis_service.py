@@ -157,3 +157,23 @@ class RedisService:
             return None
         ttl = await self.client.ttl(key)
         return {**data, "ttl_remaining": ttl}
+
+    # ─── Policy Hierarchical Invalidation ─────────────────────────────────────
+
+    async def invalidate_hierarchical(self, profile_id: str = None, device_id: str = None, policy_hash: str = None):
+        """
+        Invalidação em cascata (Senior Hardening).
+        Limpa chaves relacionadas para garantir consistência total.
+        """
+        keys_to_delete = []
+        if profile_id:
+            keys_to_delete.append(f"profile:{profile_id}:compiled")
+        if device_id:
+            keys_to_delete.append(f"device:{device_id}:policy_cache")
+        if policy_hash:
+            keys_to_delete.append(f"policy:{policy_hash}")
+        
+        if keys_to_delete:
+            await self.client.delete(*keys_to_delete)
+            self.logger.info(f"Hierarchical cache purge executed for: {keys_to_delete}")
+

@@ -34,7 +34,11 @@ class Device(Base):
     # Armazenar campos EXTRAS que não têm coluna própria (android-specific)
     metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
+    # Controle de Sincronização
+    policy_outdated: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+
     # ─── Relationships SaaS Architecture ──────────────────────────────────────
+
     
     # Cada dispositivo tem uma política materializada ativa (1:1)
     device_policy: Mapped[Optional["DevicePolicy"]] = relationship(

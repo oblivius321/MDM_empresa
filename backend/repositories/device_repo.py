@@ -107,13 +107,87 @@ class DeviceRepository:
         content = json.dumps({"c": config, "a": apps}, sort_keys=True, separators=(',', ':'))
         return hashlib.sha256(content.encode()).hexdigest()
 
-    async def get_device_policy(self, device_id: str) -> Optional[DevicePolicy]:
-        result = await self.db.execute(
-            select(DevicePolicy).where(DevicePolicy.device_id == device_id)
-        )
+    async def get_device_policy(self, device_id: str, for_update: bool = False) -> Optional[DevicePolicy]:
+        query = select(DevicePolicy).where(DevicePolicy.device_id == device_id)
+        if for_update:
+            # P2.0 Hardening: skip_locked prevents deadlocks between workers
+            query = query.with_for_update(skip_locked=True)
+        
+        result = await self.db.execute(query)
         return result.scalars().first()
 
+    # ─── Atomic Versioning (SQL-Level Anti-Race) ──────────────────────────────
+
+    async def increment_policy_version(self, policy_id: int) -> int:
+        """Incrementa versão de forma atômica no banco (SET version = version + 1)."""
+        from backend.models.policy import Policy
+        from sqlalchemy import update
+        result = await self.db.execute(
+            update(Policy)
+            .where(Policy.id == policy_id)
+            .values(version=Policy.version + 1)
+            .returning(Policy.version)
+        )
+        version = result.scalar()
+        await self.db.commit()
+        return version
+
+    async def increment_profile_version(self, profile_id: uuid.UUID) -> int:
+        """Incrementa versão do profile de forma atômica."""
+        from backend.models.policy import ProvisioningProfile
+        from sqlalchemy import update
+        result = await self.db.execute(
+            update(ProvisioningProfile)
+            .where(ProvisioningProfile.id == profile_id)
+            .values(version=ProvisioningProfile.version + 1)
+            .returning(ProvisioningProfile.version)
+        )
+        version = result.scalar()
+        await self.db.commit()
+        return version
+
+
+    # ─── Enterprise Policy Composition (Fase 3) ─────────────────────────────
+
+    async def get_global_policies(self) -> List[Policy]:
+        """Busca todas as políticas de escopo global ativas."""
+        from backend.models.policy import Policy
+        result = await self.db.execute(
+            select(Policy).where(
+                Policy.scope == "global",
+                Policy.is_active == True
+            ).order_by(Policy.priority.asc())
+        )
+        return result.scalars().all()
+
+    async def get_profile_policies(self, profile_id: uuid.UUID) -> List[Policy]:
+        """Busca políticas vinculadas a um perfil de provisionamento através da junção."""
+        from backend.models.policy import ProvisioningProfilePolicy, Policy
+        result = await self.db.execute(
+            select(Policy)
+            .join(ProvisioningProfilePolicy, ProvisioningProfilePolicy.policy_id == Policy.id)
+            .where(
+                ProvisioningProfilePolicy.profile_id == profile_id,
+                Policy.is_active == True
+            )
+            .order_by(ProvisioningProfilePolicy.priority.asc())
+        )
+        return result.scalars().all()
+
+    async def mark_profile_devices_outdated(self, profile_id: uuid.UUID):
+        """Marca cirurgicamente apenas dispositivos de um perfil como desatualizados."""
+        from backend.models.device import Device
+        from sqlalchemy import update
+        await self.db.execute(
+            update(Device)
+            .where(Device.device_policy.has(profile_id=profile_id))
+            .values(policy_outdated=True)
+        )
+        # Nota: O filter has() assume relacionamento estabelecido
+        await self.db.commit()
+
     # ─── Command Operations (Idempotent Queue) ───────────────────────────────
+
 
     async def transition_status(self, command: DeviceCommand, new_status: str, metadata: dict = None):
         """
