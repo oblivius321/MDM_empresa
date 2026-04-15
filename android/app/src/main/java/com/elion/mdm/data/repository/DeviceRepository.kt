@@ -39,7 +39,7 @@ class DeviceRepository(private val context: Context) {
     suspend fun enroll(bootstrapSecret: String, backendUrl: String): Result<EnrollmentResponse> =
         runCatching {
             // Persiste a URL antes de criar o cliente (ApiClient lê das prefs)
-            prefs.backendUrl = backendUrl
+            prefs.backendUrl = ApiClient.normalizeRootUrl(backendUrl)
             ApiClient.invalidate()
 
             val deviceId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: "UNKNOWN_${System.currentTimeMillis()}"

@@ -34,6 +34,7 @@ class DeviceResponse(DeviceBase):
     """Resposta padrão de dispositivo para listagem e dashboard."""
     id: str = Field(..., alias="device_id")
     device_id: str
+    external_id: Optional[str] = None
     enrollment_date: datetime
     last_checkin: Optional[datetime] = None
     
@@ -41,6 +42,14 @@ class DeviceResponse(DeviceBase):
     device_policy: Optional[DevicePolicyResponse] = None
     
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+
+class DeviceSummaryResponse(BaseModel):
+    total: int = 0
+    online: int = 0
+    offline: int = 0
+    locked: int = 0
+    last_global_checkin: Optional[datetime] = None
 
 
 class DeviceFullResponse(DeviceResponse):

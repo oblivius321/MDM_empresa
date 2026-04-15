@@ -21,8 +21,8 @@ O Elion MDM é uma plataforma full-stack para gerenciamento de frotas de disposi
 
 | Capacidade | Descrição |
 |---|---|
-| **Enrollment Zero-Touch** | Provisionamento via QR Code — sem interação manual |
-| **Comandos em Tempo Real** | WebSocket bidirecional para LOCK, WIPE, INSTALL |
+| **Enrollment Oficial AMAPI** | Provisionamento Zero-Touch integrando a infraestrutura oficial Google Android Management API (AMAPI) via QR Code |
+| **Comandos Stateful (AMAPI)** | Polling assíncrono e execução de comandos granulares com controle de ciclo de vida e latência de execução |
 | **Drift Detection** | Comparação de hash SHA-256 para desvio de conformidade |
 | **Self-Healing** | State machine com backoff exponencial (anti-brick) |
 | **Trust de Hardware** | Play Integrity API para atestação do dispositivo |
@@ -122,8 +122,9 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ## Roadmap
 
 ### Capacidades Atuais
-- Enrollment Zero-Touch via QR Code com Bootstrap SSOT
-- Comunicação híbrida (WebSocket + fallback por polling)
+- Integração de Enrollment Oficial Google Android Management API (AMAPI)
+- Arquitetura de Comandos Stateful com polling assíncrono (Google Operations API)
+- Acompanhamento de latência de execução de comandos em tempo real
 - Enforcement determinístico de políticas com drift detection
 - Atestação de hardware via Play Integrity API
 - Compliance scoring com enforcement automático

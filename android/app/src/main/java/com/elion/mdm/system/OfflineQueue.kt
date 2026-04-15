@@ -163,7 +163,7 @@ object OfflineQueue {
                                 }
                                 TYPE_STATE -> {
                                     val req = gson.fromJson(item.payload, StateReportRequest::class.java)
-                                    api.reportState(item.deviceId, req)
+                                    api.reportStatus(item.deviceId, req)
                                 }
                                 else -> null
                             }

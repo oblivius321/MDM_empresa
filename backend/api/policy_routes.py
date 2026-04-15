@@ -8,6 +8,7 @@ Enforcement é automático via drift_detector.
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional
 from datetime import datetime, timezone
+import uuid
 
 from backend.api.auth import get_current_user
 from backend.models.user import User
@@ -134,6 +135,14 @@ async def update_policy(
     from backend.models.policy import Policy
     from sqlalchemy.future import select
 
+    async with async_session_maker() as db:
+        result = await db.execute(
+            select(Policy).where(Policy.id == policy_id)
+        )
+        policy = result.scalar_one_or_none()
+        if not policy:
+            raise HTTPException(status_code=404, detail="Policy not found")
+
         from backend.services.policy_engine import validate_policy_structure
         from backend.repositories.device_repo import DeviceRepository
         repo = DeviceRepository(db)
@@ -184,9 +193,10 @@ async def delete_policy(
     policy_id: int,
     current_user: User = Depends(get_current_user),
 ):
-    """Desativa uma policy (soft delete via is_active=False)."""
+    """Remove definitivamente uma policy se ela nao estiver vinculada a profiles."""
     from backend.core.database import async_session_maker
-    from backend.models.policy import Policy
+    from backend.models.policy import Policy, ProvisioningProfile, ProvisioningProfilePolicy
+    from backend.repositories.device_repo import DeviceRepository
     from sqlalchemy.future import select
 
     async with async_session_maker() as db:
@@ -197,12 +207,42 @@ async def delete_policy(
         if not policy:
             raise HTTPException(status_code=404, detail="Policy not found")
 
-        policy.is_active = False
-        policy.version += 1
-        await db.commit()
+        profile_result = await db.execute(
+            select(ProvisioningProfile.name)
+            .join(
+                ProvisioningProfilePolicy,
+                ProvisioningProfilePolicy.profile_id == ProvisioningProfile.id,
+            )
+            .where(ProvisioningProfilePolicy.policy_id == policy_id)
+            .order_by(ProvisioningProfile.name.asc())
+        )
+        profile_names = list(dict.fromkeys(profile_result.scalars().all()))
+        if profile_names:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Política em uso pelos perfis: {', '.join(profile_names)}",
+            )
 
-        logger.info(f"🗑️ [Policy] Desativada: id={policy.id} by={current_user.email}")
-        return {"detail": "Policy deactivated", "id": policy_id}
+        policy_snapshot = {
+            "id": policy.id,
+            "name": policy.name,
+            "version": policy.version,
+            "scope": policy.scope,
+        }
+
+        await db.delete(policy)
+
+        repo = DeviceRepository(db)
+        await repo.log_event(
+            event_type="POLICY_DELETED",
+            actor_type="admin",
+            actor_id=current_user.email,
+            severity="INFO",
+            payload=policy_snapshot,
+        )
+
+        logger.info(f"Policy hard deleted: id={policy_id} by={current_user.email}")
+        return {"detail": "Policy deleted", "id": policy_id}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -354,19 +394,18 @@ async def preview_profile_merged_policy(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Retorna o Master Profile (Merged JSON) resultante das 5 camadas.
+    Retorna o Master Profile (Merged JSON) resultante das camadas ativas.
     Útil para o Config Preview no frontend.
     """
     from backend.core.database import async_session_maker
     from backend.repositories.device_repo import DeviceRepository
-    from backend.services.mdm_service import MDMService
     from backend.services.policy_engine import merge_policies, compute_hash
-    import uuid as uuid_pkg
 
-        # Security Hardening: Admin access only
-        if not current_user.is_admin:
-             raise HTTPException(status_code=403, detail="Acesso restrito a administradores.")
+    # Security Hardening: Admin access only
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Acesso restrito a administradores.")
 
+    async with async_session_maker() as db:
         repo = DeviceRepository(db)
         
         # 1. Fetch Layers
@@ -414,8 +453,8 @@ async def preview_profile_merged_policy(
             "profile_name": profile.name,
             "layers_applied": [
                 {"name": "System Defaults", "priority": -1},
+                {"name": "Profile Static", "priority": 0},
                 *[{"name": l["name"], "priority": l["priority"], "scope": l["scope"]} for l in all_ordered_layers],
-                {"name": "Profile Static Fallback", "priority": -2}
             ],
             "merged_config": merged_config,
             "hash": policy_hash

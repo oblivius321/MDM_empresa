@@ -33,8 +33,8 @@ class MDMService:
                 )
                 self.repo.db.add(assoc)
             await self.repo.db.commit()
-            
-        return created_profile
+
+        return await self.repo.get_profile(created_profile.id)
 
 
     async def list_profiles(self):
@@ -78,8 +78,7 @@ class MDMService:
         await self.repo.mark_profile_devices_outdated(profile_id)
         
         await self.repo.db.commit()
-        await self.repo.db.refresh(profile)
-        return profile
+        return await self.repo.get_profile(profile_id)
 
 
     async def enroll_device(self, device_id: str, name: str, device_type: str, profile_id: uuid.UUID, **kwargs) -> Tuple[Device, str]:
@@ -178,6 +177,7 @@ class MDMService:
             # Sincroniza campos legados para compatibilidade
             existing_policy.kiosk_enabled = merged_config.get("kiosk", {}).get("enabled", profile.kiosk_enabled)
             existing_policy.allowed_apps = merged_config.get("allowed_apps", profile.allowed_apps)
+            existing_policy.blocked_features = merged_config.get("restrictions", profile.blocked_features)
         else:
             new_policy = DevicePolicy(
                 device_id=device_id,
@@ -295,9 +295,21 @@ class MDMService:
         if payload:
             await self.repo.add_telemetry(device_id, payload)
 
-    async def enqueue_command(self, device_id: str, command_type: str, actor_id: str, payload: dict = None, user_id: int = None) -> DeviceCommand:
+    async def enqueue_command(
+        self,
+        device_id: str,
+        command_type: str,
+        actor_id: str,
+        payload: dict = None,
+        user_id: int = None,
+        dedupe_key: str = None,
+    ) -> DeviceCommand:
         """Adiciona comando à fila segura e registra auditoria."""
-        cmd = await self.repo.add_command(device_id, command_type, payload)
+        device = await self.repo.get(device_id)
+        cmd = await self.repo.add_command(device_id, command_type, payload, dedupe_key=dedupe_key)
+
+        if device and getattr(device, "external_id", None):
+            await self._route_command_to_amapi(device, cmd)
         await self.repo.log_event(
             event_type="COMMAND_CREATED",
             actor_type="admin",
@@ -308,6 +320,98 @@ class MDMService:
         )
         return cmd
 
+    async def _route_command_to_amapi(self, device: Device, cmd: DeviceCommand) -> None:
+        """Route command to Android Management API and save operation_id for polling.
+
+        After successful dispatch, the command is left in DISPATCHED state.
+        The background poller (amapi_operation_poller) will poll the operation
+        and advance to EXECUTED or FAILED.
+        """
+        from fastapi import HTTPException
+        from sqlalchemy.future import select
+        from backend.core import CommandStatus
+        from backend.models.android_management import AndroidManagementConfig
+        from backend.services.android_management_service import AndroidManagementService
+
+        result = await self.repo.db.execute(
+            select(AndroidManagementConfig).where(AndroidManagementConfig.id == 1)
+        )
+        config = result.scalar_one_or_none()
+        payload = dict(cmd.payload or {})
+
+        if config and config.enterprise_name:
+            payload["enterprise_name"] = config.enterprise_name
+
+        try:
+            response = await AndroidManagementService().send_command(
+                device_external_id=device.external_id,
+                command_type=cmd.command,
+                payload=payload,
+            )
+
+            # Extract Google operation name for async polling
+            operation_name = response.get("name")
+
+            cmd.operation_id = operation_name
+            cmd.payload = {
+                **(cmd.payload or {}),
+                "transport": "android_management_api",
+                "amapi_response": response,
+            }
+            await self.repo.transition_status(cmd, CommandStatus.DISPATCHED)
+            await self.repo.db.commit()
+
+            logger.info(
+                "AMAPI_COMMAND_DISPATCHED",
+                extra={
+                    "device_id": device.device_id,
+                    "external_id": device.external_id,
+                    "command_type": cmd.command,
+                    "command_id": cmd.id,
+                    "operation_id": operation_name,
+                },
+            )
+
+        except HTTPException as exc:
+            logger.error(
+                "AMAPI_COMMAND_FAILED",
+                extra={
+                    "device_id": device.device_id,
+                    "external_id": device.external_id,
+                    "command_type": cmd.command,
+                    "status_code": exc.status_code,
+                    "detail": exc.detail,
+                },
+            )
+            cmd.error_code = f"AMAPI_{exc.status_code}"
+            cmd.error_message = str(exc.detail)
+            cmd.payload = {
+                **(cmd.payload or {}),
+                "transport": "android_management_api",
+                "amapi_error": str(exc.detail),
+            }
+            await self.repo.transition_status(cmd, CommandStatus.FAILED, metadata={"error": str(exc.detail)})
+            await self.repo.db.commit()
+        except Exception as exc:
+            logger.error(
+                "AMAPI_COMMAND_FAILED",
+                extra={
+                    "device_id": device.device_id,
+                    "external_id": device.external_id,
+                    "command_type": cmd.command,
+                    "detail": str(exc),
+                },
+            )
+            cmd.error_code = "AMAPI_ERROR"
+            cmd.error_message = str(exc)
+            cmd.payload = {
+                **(cmd.payload or {}),
+                "transport": "android_management_api",
+                "amapi_error": str(exc),
+            }
+            await self.repo.transition_status(cmd, CommandStatus.FAILED, metadata={"error": str(exc)})
+            await self.repo.db.commit()
+
     async def get_device_telemetry(self, device_id: str):
         """Retorna os registros de telemetria do dispositivo."""
         return await self.repo.get_device_telemetry(device_id)
@@ -316,7 +420,11 @@ class MDMService:
         """Recupera comandos PENDING e os marca como DISPATCHED."""
         return await self.repo.get_pending_commands(device_id)
 
-    async def ack_command(self, device_id: str, command_id: uuid.UUID, status: str, metadata: dict = None) -> bool:
+    async def get_command_history(self, device_id: str) -> List[DeviceCommand]:
+        """Recupera o histórico completo de comandos."""
+        return await self.repo.get_command_history(device_id)
+
+    async def ack_command(self, device_id: str, command_id: int, status: str, metadata: dict = None) -> bool:
         """
         Processa confirmação de recepção (ACK) ou execução (EXECUTED) do device.
         """
@@ -341,7 +449,7 @@ class MDMService:
                  
         return success
 
-    async def verify_command_execution(self, device_id: str, command_id: uuid.UUID):
+    async def verify_command_execution(self, device_id: str, command_id: int):
         """
         Lógica de 'Proof of Execution'. 
         Verifica se o comando realmente teve efeito (ex: via telemetria).
@@ -453,6 +561,9 @@ class MDMService:
 
     async def list_devices(self) -> List[Device]:
         return await self.repo.list()
+
+    async def get_device_summary(self) -> Dict:
+        return await self.repo.get_summary_stats()
 
     async def get_device(self, device_id: str) -> Optional[Device]:
         return await self.repo.get(device_id)

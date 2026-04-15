@@ -6,6 +6,7 @@ from backend.core.database import engine, Base
 import contextlib
 import os
 import logging
+import mimetypes
 from dotenv import load_dotenv
 from pathlib import Path
 
@@ -14,6 +15,7 @@ import backend.models.user
 import backend.models.device
 import backend.models.policy
 import backend.models.telemetry
+import backend.models.android_management
 # ✅ NOVO: Importar modelos RBAC
 import backend.models.role
 import backend.models.permission
@@ -180,6 +182,36 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(compliance_watchdog())
     print("🛡️ Watchdog de Compliance (Fase 3) iniciado.")
 
+    # ── AMAPI OPERATION POLLER ────────────────────────────────────────────────
+    # Polls Google long-running operations for DISPATCHED AMAPI commands
+    # and advances them to EXECUTED or FAILED.
+    from backend.services.amapi_operation_poller import amapi_operation_poller
+    from backend.core import async_session_maker
+
+    # Ensure operation_id column exists on command_queue (additive migration)
+    async with async_session_maker() as migration_db:
+        from sqlalchemy import text
+        try:
+            await migration_db.execute(
+                text("ALTER TABLE command_queue ADD COLUMN IF NOT EXISTS operation_id VARCHAR")
+            )
+            await migration_db.execute(
+                text(
+                    """
+                    CREATE INDEX IF NOT EXISTS ix_command_queue_operation_id
+                    ON command_queue (operation_id)
+                    WHERE operation_id IS NOT NULL
+                    """
+                )
+            )
+            await migration_db.commit()
+            print("✅ command_queue.operation_id column ensured.")
+        except Exception as e:
+            print(f"⚠️  operation_id migration: {e}")
+
+    asyncio.create_task(amapi_operation_poller())
+    print("⏰ AMAPI Operation Poller registrado.")
+
     yield
 
 # Configuração de Logs Estruturados (JSON)
@@ -256,6 +288,7 @@ from backend.api import websocket_routes
 from backend.api import rbac_routes
 # ✅ FASE 3: Importar rotas de Policy Enterprise
 from backend.api import policy_routes
+from backend.api import android_management_routes
 
 app.include_router(routes.router, prefix="/api")
 app.include_router(auth_router, prefix="/api/auth")
@@ -264,15 +297,17 @@ app.include_router(websocket_routes.router, prefix="/api")
 app.include_router(rbac_routes.router, prefix="/api")
 # ✅ FASE 3: Registrar rotas de Policy Enterprise
 app.include_router(policy_routes.router)
+app.include_router(android_management_routes.router, prefix="/api")
 
 # ✅ REPOSITÓRIO ESTÁTICO: Hospedagem de APKs e outros recursos
 static_path = Path(__file__).resolve().parent / "static"
+mimetypes.add_type("application/vnd.android.package-archive", ".apk")
 app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
 
 @app.get("/")
 def root():
     return {
-        "message": "MDM API - use /api/enroll, /api/devices, /api/devices/{id}/apply_policy, /api/devices/{id}"
+        "message": "MDM API - use /api/android-management/enrollment-token, /api/android-management/devices, /api/devices"
     }
 
 @app.get("/health")

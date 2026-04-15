@@ -59,7 +59,7 @@ frontend/src/
 | `/login` | Login | Autenticação JWT |
 | `/dashboard` | Dashboard | KPIs da frota: contagem online, compliance score, alertas |
 | `/devices` | Devices | Lista de dispositivos em tempo real com badges de status |
-| `/devices/:id` | DeviceDetail | Telemetria individual, comandos remotos, histórico de eventos |
+| `/devices/:id` | DeviceDetail | Telemetria individual, **Fila de Comandos (Enviado, Pendente, Falha, Latência)**, envio remoto, histórico completo |
 | `/policies` | Policies | CRUD de Provisioning Profiles |
 | `/logs` | Logs | Trilha de auditoria com filtros por ação/ator |
 | `/settings` | Settings | Preferências da plataforma |

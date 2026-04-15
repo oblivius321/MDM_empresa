@@ -130,7 +130,13 @@ async def _do_dispatch(
 
     # ── 3. Criar comando via SERVICE ──────────────────────────────────────────
     try:
-        cmd = await service.repo.add_command(device_id, action, payload=payload, dedupe_key=dedupe_key)
+        cmd = await service.enqueue_command(
+            device_id=device_id,
+            command_type=action,
+            actor_id=issued_by or "system",
+            payload=payload,
+            dedupe_key=dedupe_key,
+        )
     except Exception as e:
         if "dedupe" in str(e).lower() or "unique" in str(e).lower():
             logger.warning(f"⚠️ [Integrity] Colisão de dedupe detectada em {device_id}:{action}")
@@ -138,6 +144,27 @@ async def _do_dispatch(
         raise
 
     # ── 4. Tentar entrega imediata via WebSocket ──
+    if cmd.status in (CommandStatus.ACKED, CommandStatus.FAILED):
+        broadcast_type = "CMD_FAILED" if cmd.status == CommandStatus.FAILED else "CMD_COMPLETED"
+        try:
+            await manager.broadcast_to_dashboards({
+                "type": broadcast_type,
+                "device_id": device_id,
+                "command_id": str(cmd.id),
+                "action": action,
+                "status": cmd.status,
+                "transport": (cmd.payload or {}).get("transport"),
+                "error": cmd.error_message,
+            })
+        except Exception as e:
+            logger.error(f"Erro ao notificar dashboard sobre comando AMAPI: {e}")
+        return {
+            "command_id": str(cmd.id),
+            "status": cmd.status,
+            "action": action,
+            "transport": (cmd.payload or {}).get("transport"),
+        }
+
     ws_payload = {
         "type": "command",
         "command_id": str(cmd.id),

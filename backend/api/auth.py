@@ -10,43 +10,43 @@ from backend.schemas.user import (
 )
 from backend.models.user import User
 from backend.repositories.user_repo import UserRepository
-from backend.core.security import verify_password, get_password_hash, create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES, SECRET_KEY, ALGORITHM, decode_token
+from backend.core.security import verify_password, get_password_hash, create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES, decode_token
 from backend.core.constants import SecurityQuestion
 from datetime import timedelta, datetime
 from fastapi.security import OAuth2PasswordBearer
-from jose import jwt, JWTError
 import os
 from backend.core.limiter import limiter
 
 # ── DEFINIÇÃO DO ROUTER (SEM PREFIXO LOCAL) ────────────
 router = APIRouter(tags=["Autenticação"])
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
 # Middleware-like function for auth
-async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)):
+async def get_current_user(
+    request: Request,
+    token: str | None = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db),
+):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Credenciais inválidas ou token expirado",
         headers={"WWW-Authenticate": "Bearer"},
     )
     
-    token = request.cookies.get("access_token")
     if not token:
-        auth_header = request.headers.get("Authorization")
-        if auth_header and auth_header.startswith("Bearer "):
-            token = auth_header.split(" ")[1]
+        token = request.cookies.get("access_token")
             
     if not token:
         raise credentials_exception
     
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")
-        token_type = payload.get("type", "access")
-        
-        if token_type != "access" or email is None:
-            raise credentials_exception
-            
-    except JWTError:
+    payload = decode_token(token)
+    if not payload:
+        raise credentials_exception
+
+    email: str = payload.get("sub")
+    token_type = payload.get("type", "access")
+    
+    if token_type != "access" or email is None:
         raise credentials_exception
     
     repo = UserRepository(db)
@@ -72,7 +72,7 @@ async def get_security_questions():
         for q in SecurityQuestion
     ]
 
-@router.post("/login")
+@router.post("/login", response_model=Token)
 @limiter.limit("5/minute")
 async def login(request: Request, response: Response, credentials: UserLogin, db: AsyncSession = Depends(get_db)):
     repo = UserRepository(db)
@@ -107,10 +107,7 @@ async def login(request: Request, response: Response, credentials: UserLogin, db
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60
     )
     
-    return {
-        "message": "Autenticação bem-sucedida, sessão iniciada.",
-        "user": {"email": user.email, "is_admin": user.is_admin, "id": user.id}
-    }
+    return {"access_token": access_token, "token_type": "bearer"}
 
 @router.post("/logout")
 async def logout(response: Response):

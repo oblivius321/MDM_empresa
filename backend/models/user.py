@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Index
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Index, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime
 from backend.core.database import Base
@@ -6,6 +6,15 @@ from typing import List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from backend.models.role import Role
+
+
+def default_user_preferences() -> dict:
+    return {
+        "offline_alerts": True,
+        "compliance_failures": True,
+        "new_devices": True,
+        "system_updates": True,
+    }
 
 
 class User(Base):
@@ -20,6 +29,7 @@ class User(Base):
     # ============= CAMPOS DE RBAC =============
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    preferences: Mapped[dict] = mapped_column(JSON, default=default_user_preferences, nullable=False)
     
     # Auditoria
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)

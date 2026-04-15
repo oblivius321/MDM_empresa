@@ -189,10 +189,7 @@ class KioskLauncherActivity : AppCompatActivity() {
         }
 
         // Configurar features do Lock Task (lockdown total)
-        dpm.setLockTaskFeatures(
-            android.app.admin.DevicePolicyManager.LOCK_TASK_FEATURE_SYSTEM_INFO or
-            android.app.admin.DevicePolicyManager.LOCK_TASK_FEATURE_GLOBAL_ACTIONS
-        )
+        dpm.setLockTaskFeatures(android.app.admin.DevicePolicyManager.LOCK_TASK_FEATURE_NONE)
 
         // Entrar em Lock Task Mode
         if (!dpm.isInLockTaskMode()) {

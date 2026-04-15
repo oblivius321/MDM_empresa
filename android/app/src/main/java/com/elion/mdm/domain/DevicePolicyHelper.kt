@@ -139,6 +139,12 @@ class DevicePolicyHelper(private val context: Context) {
 
     // ─── Password ─────────────────────────────────────────────────────────────
 
+    fun setApplicationHidden(packageName: String, hidden: Boolean): Result<Unit> = runCatching {
+        check(checkDO("setApplicationHidden")) { "Nao e Device Owner" }
+        dpm.setApplicationHidden(admin, packageName, hidden)
+        Log.i(TAG, "setApplicationHidden($packageName, hidden=$hidden)")
+    }
+
     fun setMinPasswordLength(length: Int): Result<Unit> = runCatching {
         check(checkAdmin("setMinPasswordLength")) { "Não é Device Admin" }
         dpm.setPasswordMinimumLength(admin, length)
@@ -146,6 +152,32 @@ class DevicePolicyHelper(private val context: Context) {
     }
 
     // ─── User Restrictions ────────────────────────────────────────────────────
+
+    fun setRestriction(key: String, disabled: Boolean): Result<Unit> {
+        return when (key) {
+            "camera", "camera_disabled" -> setCameraDisabled(disabled)
+            "status_bar", "status_bar_disabled" -> setStatusBarDisabled(disabled)
+            "factory_reset", "factory_reset_disabled" -> setFactoryResetDisabled(disabled)
+            "safe_mode", "safe_mode_disabled" -> setSafeModeDisabled(disabled)
+            "usb_debug", "usb_debug_disabled" -> setUserRestriction(UserManager.DISALLOW_DEBUGGING_FEATURES, disabled)
+            "usb_file_transfer", "usb_file_transfer_disabled" -> setUserRestriction(UserManager.DISALLOW_USB_FILE_TRANSFER, disabled)
+            "install_apps", "install_apps_disabled" -> setUserRestriction(UserManager.DISALLOW_INSTALL_APPS, disabled)
+            "uninstall_apps", "uninstall_apps_disabled" -> setUserRestriction(UserManager.DISALLOW_UNINSTALL_APPS, disabled)
+            "install_unknown_sources", "install_unknown_sources_disabled" -> setUserRestriction(UserManager.DISALLOW_INSTALL_UNKNOWN_SOURCES, disabled)
+            "add_user", "add_user_disabled" -> setUserRestriction(UserManager.DISALLOW_ADD_USER, disabled)
+            "modify_accounts", "modify_accounts_disabled" -> setUserRestriction(UserManager.DISALLOW_MODIFY_ACCOUNTS, disabled)
+            else -> runCatching {
+                Log.w(TAG, "Restricao desconhecida ignorada: $key=$disabled")
+            }
+        }
+    }
+
+    private fun setUserRestriction(restriction: String, disabled: Boolean): Result<Unit> = runCatching {
+        check(checkDO("setUserRestriction:$restriction")) { "Nao e Device Owner" }
+        if (disabled) dpm.addUserRestriction(admin, restriction)
+        else dpm.clearUserRestriction(admin, restriction)
+        Log.i(TAG, "$restriction=$disabled")
+    }
 
     fun setFactoryResetDisabled(disabled: Boolean): Result<Unit> = runCatching {
         check(checkDO("setFactoryResetDisabled")) { "Não é Device Owner" }

@@ -14,6 +14,10 @@ import com.elion.mdm.services.MDMForegroundService
  *   2. Em caso de sucesso, inicia o MDMForegroundService
  *   3. Aplica restrições iniciais de segurança via DevicePolicyHelper
  */
+class EnrollDeviceUseCase(private val context: Context) {
+
+    private val repository = DeviceRepository(context)
+
     suspend fun enroll(
         bootstrapSecret: String,
         backendUrl: String,

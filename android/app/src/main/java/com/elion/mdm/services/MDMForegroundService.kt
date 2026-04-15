@@ -205,7 +205,7 @@ class MDMForegroundService : Service() {
         kioskWatchdogJob?.cancel()
         kioskWatchdogJob = serviceScope.launch {
             while (isActive) {
-                if (prefs.isKioskEnabled && !dpm.isInLockTaskMode()) {
+                if (prefs.isKioskEnabled && !dpmHelper.isInLockTaskMode()) {
                     Log.e(TAG, "🔥 CENTRAL WATCHDOG: Modo Kiosk Corrompido/Desligado detectado! Forçando reentrada Imediata.")
                     com.elion.mdm.launcher.KioskLauncherActivity.launch(this@MDMForegroundService)
                 }
@@ -247,7 +247,7 @@ class MDMForegroundService : Service() {
             batteryLevel     = getBatteryLevel(),
             deviceModel      = "${Build.MANUFACTURER} ${Build.MODEL}",
             androidVersion   = Build.VERSION.RELEASE,
-            complianceStatus = if (dpm.isDeviceOwner()) "compliant" else "non_compliant"
+            complianceStatus = if (dpmHelper.isDeviceOwner()) "compliant" else "non_compliant"
         )
 
         val response = api.checkin(deviceId, request)
@@ -304,14 +304,20 @@ class MDMForegroundService : Service() {
 
     private fun connectWebSocket() {
         val token    = prefs.deviceToken ?: return
-        val baseUrl  = prefs.backendUrl.replace("https://", "wss://").replace("http://", "ws://")
-        val wsUrl    = "${baseUrl.trimEnd('/')}/ws/device?token=$token"
+        val deviceId = prefs.deviceId ?: return
+        val baseUrl  = ApiClient.normalizeRootUrl(prefs.backendUrl)
+            .replace("https://", "wss://")
+            .replace("http://", "ws://")
+        val wsUrl    = "${baseUrl.trimEnd('/')}/api/ws/device/$deviceId"
 
         val client   = OkHttpClient.Builder()
             .pingInterval(20, TimeUnit.SECONDS)
             .build()
 
-        val request  = Request.Builder().url(wsUrl).build()
+        val request  = Request.Builder()
+            .url(wsUrl)
+            .addHeader("X-Device-Token", token)
+            .build()
 
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
 

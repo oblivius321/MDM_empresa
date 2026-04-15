@@ -25,11 +25,12 @@ class SecurePreferences(context: Context) {
         private const val KEY_BACKEND_URL      = "backend_url"
         private const val KEY_CHECKIN_INTERVAL = "checkin_interval_seconds"
         private const val KEY_LAST_SYNC        = "last_sync_timestamp"
-        private const val DEFAULT_BACKEND_URL  = "http://192.168.25.227:8000"
+        private const val DEFAULT_BACKEND_URL  = "http://192.168.25.227"
 
         // ─── Kiosk Keys ─────────────────────────────────────────────
         private const val KEY_KIOSK_ENABLED       = "kiosk_enabled"
         private const val KEY_ALLOWED_APPS        = "kiosk_allowed_apps"       // JSON array
+        private const val KEY_BLOCKED_APPS        = "kiosk_blocked_apps"       // JSON array
         private const val KEY_ADMIN_PASSWORD_HASH = "admin_password_hash"      // bcrypt hash
         private const val KEY_ADMIN_EMAIL         = "admin_email"
         private const val KEY_LOGIN_ATTEMPTS      = "login_attempts"
@@ -131,6 +132,10 @@ class SecurePreferences(context: Context) {
     var allowedAppsJson: String
         get() = prefs.getString(KEY_ALLOWED_APPS, "[]") ?: "[]"
         set(v) = prefs.edit().putString(KEY_ALLOWED_APPS, v).apply()
+
+    var blockedAppsJson: String
+        get() = prefs.getString(KEY_BLOCKED_APPS, "[]") ?: "[]"
+        set(v) = prefs.edit().putString(KEY_BLOCKED_APPS, v).apply()
 
     var adminPasswordHash: String?
         get() = prefs.getString(KEY_ADMIN_PASSWORD_HASH, null)

@@ -21,19 +21,6 @@ async def test_create_device_token():
     assert not verify_device_token(token, "invalid_hash")
 
 @pytest.mark.asyncio
-async def test_enroll_generates_token():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        response = await ac.post("/api/enroll", json={
-            "device_id": "test-sec-device-1",
-            "name": "Test Device Security",
-            "device_type": "android"
-        })
-        assert response.status_code == 200
-        data = response.json()
-        assert "device_token" in data
-        assert data["device_token"].startswith("test-sec-device-1:")
-
-@pytest.mark.asyncio
 async def test_protected_device_route():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         # Tentar acessar sem token

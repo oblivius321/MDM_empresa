@@ -28,7 +28,7 @@ object ApiClient {
 
     fun getInstance(context: Context): ApiService {
         val prefs   = SecurePreferences(context)
-        val baseUrl = normalizeUrl(prefs.backendUrl)
+        val baseUrl = normalizeRootUrl(prefs.backendUrl)
 
         if (retrofit == null || currentBaseUrl != baseUrl) {
             retrofit       = buildRetrofit(context, baseUrl)
@@ -100,7 +100,7 @@ object ApiClient {
 
     // ─── Util ─────────────────────────────────────────────────────────────────
 
-    private fun normalizeUrl(url: String): String {
+    fun normalizeRootUrl(url: String): String {
         var normalized = url.trim()
         if (normalized.isBlank()) return "http://localhost:8000/"
         
@@ -108,7 +108,12 @@ object ApiClient {
         if (!normalized.startsWith("http://") && !normalized.startsWith("https://")) {
             normalized = "http://$normalized"
         }
-        
+
+        normalized = normalized.trimEnd('/')
+        if (normalized.endsWith("/api")) {
+            normalized = normalized.removeSuffix("/api")
+        }
+
         // Garante barra final para Retrofit
         return if (normalized.endsWith("/")) normalized else "$normalized/"
     }

@@ -31,9 +31,9 @@ interface ApiService {
     // ─── Check-in ─────────────────────────────────────────────────────────────
     // Endpoint: POST /api/devices/{id}/checkin
 
-    @POST("api/devices/{device_id}/checkin")
+    @POST("api/checkin")
     suspend fun checkin(
-        @Path("device_id") deviceId: String,
+        @Query("device_id") deviceId: String,
         @Body request: CheckinRequest
     ): Response<CheckinResponse>
 

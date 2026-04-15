@@ -1,8 +1,10 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 
 interface User {
+  id?: number;
   email: string;
   is_admin: boolean;
+  is_active?: boolean;
 }
 
 interface AuthContextType {
@@ -24,6 +26,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Restaurar sessão ao iniciar
   useEffect(() => {
     const savedUser = localStorage.getItem('auth_user');
+    const savedToken = localStorage.getItem('auth_token');
 
     if (savedUser) {
       try {
@@ -32,6 +35,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.error('Erro ao restaurar sessão:', err);
         localStorage.removeItem('auth_user');
       }
+    }
+
+    if (savedToken) {
+      importApi().then((api) => {
+        api.defaults.headers.common.Authorization = `Bearer ${savedToken}`;
+      });
     }
 
     setLoading(false);
@@ -58,10 +67,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.log(`✅ [AuthContext] Response data:`, response.data);
 
       const data = response.data;
+      const accessToken = data.access_token;
+
+      if (!accessToken) {
+        throw new Error('Login não retornou access_token.');
+      }
+
+      localStorage.setItem('auth_token', accessToken);
+      api.defaults.headers.common.Authorization = `${data.token_type || 'bearer'} ${accessToken}`;
+
+      const meResponse = await api.get('/auth/me');
+      const me = meResponse.data;
 
       const userPayload = {
-        email: data.user.email,
-        is_admin: data.user.is_admin || false,
+        id: me.id,
+        email: me.email,
+        is_admin: me.is_admin || false,
+        is_active: me.is_active,
       };
 
       setUser(userPayload);
@@ -118,10 +140,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     setUser(null);
     localStorage.removeItem('auth_user');
+    localStorage.removeItem('auth_token');
+    try {
+      const api = await importApi();
+      delete api.defaults.headers.common.Authorization;
+    } catch (e) { /* ignore */ }
   };
 
   const refreshToken = async (): Promise<boolean> => {
-    return !!user;
+    try {
+      const api = await importApi();
+      const token = localStorage.getItem('auth_token');
+      if (token) {
+        api.defaults.headers.common.Authorization = `Bearer ${token}`;
+      }
+      const response = await api.get('/auth/me');
+      const currentUser = response.data;
+      const userPayload = {
+        id: currentUser.id,
+        email: currentUser.email,
+        is_admin: currentUser.is_admin || false,
+        is_active: currentUser.is_active,
+      };
+      setUser(userPayload);
+      localStorage.setItem('auth_user', JSON.stringify(userPayload));
+      return true;
+    } catch {
+      setUser(null);
+      localStorage.removeItem('auth_user');
+      localStorage.removeItem('auth_token');
+      return false;
+    }
   };
 
   return (

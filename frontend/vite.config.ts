@@ -7,11 +7,19 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname, '');
   // Em Docker, use o nome do container. Localmente, use localhost:8000
   const apiProxyTarget = env.VITE_API_PROXY_TARGET || 'http://backend:8000';
+  const allowedHosts = (env.VITE_ALLOWED_HOSTS || '')
+    .split(',')
+    .map((host) => host.trim())
+    .filter(Boolean);
 
   return {
     server: {
       host: "0.0.0.0",
       port: 3000,
+      allowedHosts,
+      headers: {
+        "Cache-Control": "no-store",
+      },
       hmr: {
         overlay: false,
       },
@@ -29,6 +37,9 @@ export default defineConfig(({ mode }) => {
       alias: {
         "@": path.resolve(__dirname, "./src"),
       },
+    },
+    optimizeDeps: {
+      include: ["@radix-ui/react-dialog"],
     },
   };
 });

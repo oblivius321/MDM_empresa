@@ -1,7 +1,31 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
 }
+
+val localProperties = Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.inputStream().use(localProperties::load)
+}
+
+fun signingProperty(name: String): String? =
+    providers.gradleProperty(name).orNull
+        ?: providers.environmentVariable(name).orNull
+        ?: localProperties.getProperty(name)
+
+val releaseStoreFile = signingProperty("ELION_RELEASE_STORE_FILE")
+val releaseStorePassword = signingProperty("ELION_RELEASE_STORE_PASSWORD")
+val releaseKeyAlias = signingProperty("ELION_RELEASE_KEY_ALIAS")
+val releaseKeyPassword = signingProperty("ELION_RELEASE_KEY_PASSWORD")
+val hasReleaseSigningConfig =
+    !releaseStoreFile.isNullOrBlank() &&
+        !releaseStorePassword.isNullOrBlank() &&
+        !releaseKeyAlias.isNullOrBlank() &&
+        !releaseKeyPassword.isNullOrBlank() &&
+        rootProject.file(releaseStoreFile!!).isFile
 
 android {
     namespace         = "com.elion.mdm"
@@ -15,10 +39,24 @@ android {
         versionName   = "1.0.0"
     }
 
+    signingConfigs {
+        if (hasReleaseSigningConfig) {
+            create("release") {
+                storeFile = rootProject.file(releaseStoreFile!!)
+                storePassword = releaseStorePassword!!
+                keyAlias = releaseKeyAlias!!
+                keyPassword = releaseKeyPassword!!
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled   = true
             isShrinkResources = true
+            if (hasReleaseSigningConfig) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

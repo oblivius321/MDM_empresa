@@ -112,21 +112,20 @@ Três watchdogs concorrentes garantem a resiliência do sistema:
 | **Presença** | 30s | Marca dispositivos offline se heartbeat > 65s |
 | **Timeout de Comandos** | 15s | Retry com backoff exponencial, DLQ após max_retries |
 | **Compliance** | 5min | Reavalia devices sem check de compliance > 1 hora |
+| **AMAPI Poller** | 15s | Monitora operações long-running no Google (PENDING → DISPATCHED → EXECUTED/FAILED) e computa latência. Alerta após 3 min stall. |
 
 ---
 
-## Ciclo de Vida de Comandos (Kill Switch)
+## Ciclo de Vida de Comandos (Stateful AMAPI)
 
-Comandos críticos (WIPE, LOCK) seguem um protocolo de verificação em 4 estágios:
+Comandos para dispositivos gerenciados via infraestrutura do Google agora seguem o rastreio rigoroso stateful via HTTP Long-Running Operations:
 
 ```
-SENT ──► ACK ──► EXECUTED ──► VERIFIED
-                                 │
-                                 └─ Prova de Execução
-                                    (cross-check com telemetria)
-
-⚠️ Timeout sem VERIFIED → FAILED + alerta humano (CRÍTICO)
+PENDING ──► DISPATCHED ──► EXECUTED / FAILED
 ```
+- **DISPATCHED**: Payload assíncrono emitido via `MDMService._route_command_to_amapi` que recupera a `operation_name`. 
+- **EXECUTED**: Confirmado pelo `amapi_operation_poller` periodicamente contendo tempo de submissão e tempo de resposta, originando o KPI de **Latência de Execução** em formato decimal de tempo.
+- **ALERTA STALL**: Em 3 minutos preso no Google, um registro dinâmico no payload salva a integridade do worker e envia a Warning Cloud Metrics. Timeout Hard falha a operação de forma segura em 24h.
 
 > Para a implementação do lado Android do tratamento de comandos, veja o [README do Android Agent](../android/README.md).
 
@@ -145,15 +144,16 @@ SENT ──► ACK ──► EXECUTED ──► VERIFIED
 
 | Endpoint | Método | Auth | Descrição |
 |---|---|---|---|
-| `/api/enroll` | POST | Bootstrap | Enrollment Zero-Touch |
+| `/api/android-management/enrollment-token` | POST | Admin JWT | Enrollment Android Enterprise oficial |
 | `/api/devices` | GET | JWT | Listar todos os dispositivos |
 | `/api/devices/{id}` | GET | JWT | Detalhes do dispositivo |
 | `/api/devices/{id}/bootstrap` | GET | Token Device | Download do SSOT |
 | `/api/devices/{id}/status` | POST | Token Device | Report de saúde |
 | `/api/devices/{id}/policy/sync` | POST | Token Device | Handshake de drift detection |
+| `/api/devices/{id}/commands` | GET | Token Device | Histórico de todas as operações emitidas |
 | `/api/devices/{id}/commands/pending` | GET | Token Device | Buscar comandos pendentes |
 | `/api/devices/{id}/commands/{cmd_id}/ack` | POST | Token Device | Confirmar execução |
-| `/api/devices/{id}/commands` | POST | JWT | Criar comando remoto |
+| `/api/devices/{id}/commands` | POST | JWT | Criar comando remoto na fila |
 
 ### Trust e Atestação
 

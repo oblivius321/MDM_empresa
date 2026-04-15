@@ -65,8 +65,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val apiUrl = info.metadata["api_url"]
                 val bootstrapToken = info.metadata["bootstrap_token"]
                 
-                if (!profileId.isNullOrBlank() && !apiUrl.isNullOrBlank() && !bootstrapToken.isNullOrBlank()) {
-                    android.util.Log.i("ElionViewModel", "Auto-Enrollment disparado para profile: $profileId")
+                if (!apiUrl.isNullOrBlank() && !bootstrapToken.isNullOrBlank()) {
+                    android.util.Log.i("ElionViewModel", "Auto-Enrollment disparado para profile: ${profileId ?: "token-bound"}")
                     enroll(bootstrapToken, apiUrl, profileId)
                 }
             }

@@ -2,9 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { QRCodeCanvas } from 'qrcode.react';
 import {
-  enrollmentService,
-  EnrollmentConfig,
-  ProvisioningProfile,
+  androidManagementService,
+  AndroidManagementEnrollmentToken,
 } from '@/services/api';
 import {
   X,
@@ -17,8 +16,6 @@ import {
   Loader2,
   AlertCircle,
   Smartphone,
-  Layers,
-  Download,
 } from 'lucide-react';
 
 interface EnrollmentModalProps {
@@ -28,22 +25,15 @@ interface EnrollmentModalProps {
 
 export function EnrollmentModal({ isOpen, onClose }: EnrollmentModalProps) {
   const [step, setStep] = useState<'config' | 'qr'>('config');
-  const [profiles, setProfiles] = useState<ProvisioningProfile[]>([]);
-  const [selectedProfileId, setSelectedProfileId] = useState('');
-  const [mode, setMode] = useState<'single' | 'batch'>('single');
-  const [maxDevices, setMaxDevices] = useState(1);
-  const [ttlMinutes, setTtlMinutes] = useState(15);
-  const [enrollmentData, setEnrollmentData] = useState<EnrollmentConfig | null>(null);
+  const [enrollmentData, setEnrollmentData] = useState<AndroidManagementEnrollmentToken | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [countdown, setCountdown] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Carregar perfis ao abrir o modal
   useEffect(() => {
     if (isOpen) {
-      loadProfiles();
       setStep('config');
       setEnrollmentData(null);
       setError('');
@@ -53,12 +43,11 @@ export function EnrollmentModal({ isOpen, onClose }: EnrollmentModalProps) {
     };
   }, [isOpen]);
 
-  // Countdown timer
   useEffect(() => {
-    if (enrollmentData?.expires_at) {
+    if (enrollmentData?.expiration_timestamp) {
       const updateCountdown = () => {
         const now = Date.now();
-        const expires = new Date(enrollmentData.expires_at).getTime();
+        const expires = new Date(enrollmentData.expiration_timestamp).getTime();
         const remaining = Math.max(0, Math.floor((expires - now) / 1000));
         setCountdown(remaining);
         if (remaining <= 0 && timerRef.current) {
@@ -74,79 +63,34 @@ export function EnrollmentModal({ isOpen, onClose }: EnrollmentModalProps) {
     }
   }, [enrollmentData]);
 
-  const loadProfiles = async () => {
-    try {
-      const res = await enrollmentService.listProfiles();
-      setProfiles(res.data);
-      if (res.data.length > 0) {
-        setSelectedProfileId(res.data[0].id);
-      }
-    } catch {
-      setError('Erro ao carregar perfis de provisionamento.');
-    }
-  };
-
-  const generateToken = useCallback(async () => {
-    if (!selectedProfileId) {
-      setError('Selecione um perfil de provisionamento.');
-      return;
-    }
-
+  const generateOfficialQr = useCallback(async () => {
     setLoading(true);
     setError('');
 
     try {
-      const res = await enrollmentService.generateToken({
-        profile_id: selectedProfileId,
-        mode,
-        max_devices: mode === 'batch' ? maxDevices : 1,
-        ttl_minutes: ttlMinutes,
-      });
+      const res = await androidManagementService.createEnrollmentToken({});
       setEnrollmentData(res.data);
       setStep('qr');
     } catch (err: any) {
-      const msg = err.response?.data?.detail || 'Erro ao gerar token de enrollment.';
+      const msg = err.response?.data?.detail || 'Erro ao gerar token oficial do Google.';
       setError(msg);
     } finally {
       setLoading(false);
     }
-  }, [selectedProfileId, mode, maxDevices, ttlMinutes]);
+  }, []);
 
-  const regenerateToken = () => {
+  const regenerateOfficialQr = () => {
     if (timerRef.current) clearInterval(timerRef.current);
     setStep('config');
     setEnrollmentData(null);
   };
 
-  const buildQrPayload = (): string => {
-    if (!enrollmentData) return '';
-
-    try {
-      const payload: Record<string, any> = {
-        'android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME':
-          enrollmentData.admin_component,
-        'android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_DOWNLOAD_LOCATION':
-          enrollmentData.apk_url,
-        'android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_CHECKSUM':
-          enrollmentData.apk_checksum,
-        'android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE': {
-          'bootstrap_token': enrollmentData.enrollment_token,
-          'api_url': enrollmentData.api_url,
-          'enrollment_mode': 'qr',
-        },
-      };
-
-      const json = JSON.stringify(payload);
-      console.log('📡 [QR Debug] Payload gerado:', json);
-      return json;
-    } catch (err) {
-      console.error('❌ [QR Debug] Erro ao gerar payload:', err);
-      return 'ERROR';
-    }
+  const officialQrValue = (): string => {
+    return enrollmentData?.qr_code || '';
   };
 
   const copyPayload = () => {
-    navigator.clipboard.writeText(buildQrPayload());
+    navigator.clipboard.writeText(officialQrValue());
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -225,113 +169,22 @@ export function EnrollmentModal({ isOpen, onClose }: EnrollmentModalProps) {
 
           {step === 'config' && (
             <div className="space-y-5">
-              {/* Profile Selector */}
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 text-sm font-medium text-foreground">
-                  <Shield className="w-3.5 h-3.5 text-primary" />
-                  Perfil de Provisionamento
-                </label>
-                {profiles.length === 0 ? (
-                  <div className="px-4 py-3 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-500 text-sm">
-                    Nenhum perfil encontrado. Crie um perfil antes de continuar.
-                  </div>
-                ) : (
-                  <select
-                    id="profile-select"
-                    value={selectedProfileId}
-                    onChange={(e) => setSelectedProfileId(e.target.value)}
-                    className="w-full px-3 py-2.5 text-sm bg-secondary border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors"
-                  >
-                    {profiles.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} (v{p.version})
-                      </option>
-                    ))}
-                  </select>
-                )}
+              <div className="px-4 py-3 rounded-md bg-secondary border border-border text-sm text-muted-foreground">
+                Use este QR para provisionamento Android Enterprise via Google.
               </div>
 
-              {/* Mode Selector */}
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 text-sm font-medium text-foreground">
-                  <Smartphone className="w-3.5 h-3.5 text-primary" />
-                  Modo de Enrollment
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    id="mode-single"
-                    onClick={() => setMode('single')}
-                    className={`flex flex-col items-center gap-1.5 p-3 rounded-lg border text-sm font-medium transition-all ${mode === 'single'
-                        ? 'bg-primary/10 border-primary text-primary'
-                        : 'bg-secondary border-border text-muted-foreground hover:border-primary/30'
-                      }`}
-                  >
-                    <Smartphone className="w-5 h-5" />
-                    <span>Único</span>
-                    <span className="text-[10px] opacity-70">1 device</span>
-                  </button>
-                  <button
-                    id="mode-batch"
-                    onClick={() => setMode('batch')}
-                    className={`flex flex-col items-center gap-1.5 p-3 rounded-lg border text-sm font-medium transition-all ${mode === 'batch'
-                        ? 'bg-primary/10 border-primary text-primary'
-                        : 'bg-secondary border-border text-muted-foreground hover:border-primary/30'
-                      }`}
-                  >
-                    <Layers className="w-5 h-5" />
-                    <span>Lote</span>
-                    <span className="text-[10px] opacity-70">N devices</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Batch: Max Devices */}
-              {mode === 'batch' && (
-                <div className="space-y-2 animate-fade-in">
-                  <label className="flex items-center gap-2 text-sm font-medium text-foreground">
-                    <Layers className="w-3.5 h-3.5 text-primary" />
-                    Máximo de Dispositivos
-                  </label>
-                  <input
-                    type="number"
-                    id="max-devices-input"
-                    min={2}
-                    max={500}
-                    value={maxDevices}
-                    onChange={(e) => setMaxDevices(Math.max(2, Math.min(500, Number(e.target.value))))}
-                    className="w-full px-3 py-2.5 text-sm bg-secondary border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors"
-                  />
-                </div>
-              )}
-
-              {/* TTL */}
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 text-sm font-medium text-foreground">
-                  <Clock className="w-3.5 h-3.5 text-primary" />
-                  Tempo de Validade
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="range"
-                    id="ttl-slider"
-                    min={5}
-                    max={60}
-                    step={5}
-                    value={ttlMinutes}
-                    onChange={(e) => setTtlMinutes(Number(e.target.value))}
-                    className="flex-1 h-2 rounded-lg appearance-none cursor-pointer accent-primary bg-secondary"
-                  />
-                  <span className="text-sm font-bold text-primary min-w-[50px] text-right">
-                    {ttlMinutes} min
-                  </span>
+              <div className="grid grid-cols-1 gap-2 text-xs">
+                <div className="px-3 py-2 rounded-md bg-background/50 border border-border">
+                  <span className="block text-[10px] font-bold text-foreground">Android Device Policy</span>
+                  <span>Use em dispositivo restaurado de fabrica, tocando 6 vezes na tela de boas-vindas.</span>
                 </div>
               </div>
 
               {/* Generate Button */}
               <button
                 id="generate-qr-button"
-                onClick={generateToken}
-                disabled={loading || profiles.length === 0}
+                onClick={generateOfficialQr}
+                disabled={loading}
                 className="w-full flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
               >
                 {loading ? (
@@ -339,7 +192,7 @@ export function EnrollmentModal({ isOpen, onClose }: EnrollmentModalProps) {
                 ) : (
                   <QrCode className="w-4 h-4" />
                 )}
-                {loading ? 'Gerando Token Seguro...' : 'Gerar QR Code'}
+                {loading ? 'Gerando token Google...' : 'Gerar QR Oficial (Android Enterprise)'}
               </button>
             </div>
           )}
@@ -352,7 +205,7 @@ export function EnrollmentModal({ isOpen, onClose }: EnrollmentModalProps) {
                   <div style={{ padding: '20px', backgroundColor: '#ffffff', borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', border: '1px solid #e4e4e7' }}>
                     <QRCodeCanvas
                       id="qr-code-canvas"
-                      value={buildQrPayload() || "https://elion-mdm.app"}
+                      value={officialQrValue()}
                       size={220}
                       level="M"
                       includeMargin={false}
@@ -395,20 +248,15 @@ export function EnrollmentModal({ isOpen, onClose }: EnrollmentModalProps) {
                 <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-secondary border border-border">
                   <Shield className="w-3.5 h-3.5 text-primary flex-shrink-0" />
                   <div>
-                    <p className="text-muted-foreground">Perfil</p>
-                    <p className="font-bold text-foreground truncate">{enrollmentData.profile_name}</p>
+                    <p className="text-muted-foreground">Token Google</p>
+                    <p className="font-bold text-foreground truncate">{enrollmentData.name}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-secondary border border-border">
                   <Smartphone className="w-3.5 h-3.5 text-primary flex-shrink-0" />
                   <div>
-                    <p className="text-muted-foreground">Modo</p>
-                    <p className="font-bold text-foreground">
-                      {enrollmentData.mode === 'single'
-                        ? '1 Device'
-                        : `Lote (${enrollmentData.max_devices})`
-                      }
-                    </p>
+                    <p className="text-muted-foreground">Origem</p>
+                    <p className="font-bold text-foreground">Android Management API</p>
                   </div>
                 </div>
               </div>
@@ -429,11 +277,11 @@ export function EnrollmentModal({ isOpen, onClose }: EnrollmentModalProps) {
               <div className="flex gap-2">
                 <button
                   id="regenerate-button"
-                  onClick={regenerateToken}
+                  onClick={regenerateOfficialQr}
                   className="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-medium bg-secondary text-foreground border border-border rounded-lg hover:bg-muted transition-colors"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
-                  Novo Token
+                  Novo QR Oficial
                 </button>
                 <button
                   id="copy-payload-button"
@@ -445,7 +293,7 @@ export function EnrollmentModal({ isOpen, onClose }: EnrollmentModalProps) {
                   ) : (
                     <Copy className="w-3.5 h-3.5" />
                   )}
-                  {copied ? 'Copiado!' : 'Copiar JSON'}
+                  {copied ? 'Copiado!' : 'Copiar QR oficial'}
                 </button>
               </div>
             </div>

@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { TopBar } from '@/components/TopBar';
-import { Settings as SettingsIcon, Server, Key, Bell, Database, Shield, Users, HardDrive, CheckCircle, AlertCircle } from 'lucide-react';
+import { Settings as SettingsIcon, Server, Bell, Database, Shield, Users, HardDrive, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { API_DISPLAY_URL, buildApiUrl } from '@/services/api';
+import { API_DISPLAY_URL, buildApiUrl, userService, UserPreferences } from '@/services/api';
 import { useAuth } from '@/contexts/AuthContext';
 
 interface SystemHealth {
@@ -12,12 +12,32 @@ interface SystemHealth {
   storage: number;
 }
 
+type NotificationPreferenceKey = keyof UserPreferences;
+
+const defaultNotificationPreferences: UserPreferences = {
+  offline_alerts: true,
+  compliance_failures: true,
+  new_devices: true,
+  system_updates: true,
+};
+
+const notificationSettings: Array<{
+  key: NotificationPreferenceKey;
+  label: string;
+  desc: string;
+}> = [
+  { key: 'offline_alerts', label: 'Alertas de dispositivo offline', desc: 'Notificar quando dispositivo ficar offline por mais de 1h' },
+  { key: 'compliance_failures', label: 'Falhas de compliance', desc: 'Notificar quando um dispositivo sair de conformidade' },
+  { key: 'new_devices', label: 'Novos dispositivos', desc: 'Notificar quando um novo dispositivo se registrar' },
+  { key: 'system_updates', label: 'Atualizacoes de sistema', desc: 'Notificar sobre atualizacoes disponiveis' },
+];
+
 export default function Settings() {
   const { toast } = useToast();
   const { user } = useAuth();
   const apiBase = API_DISPLAY_URL;
   const [refreshInterval, setRefreshInterval] = useState('30000');
-  const [systemHealth, setSystemHealth] = useState<SystemHealth>({
+  const [systemHealth] = useState<SystemHealth>({
     api: 'healthy',
     database: 'healthy',
     cache: 'healthy',
@@ -26,12 +46,78 @@ export default function Settings() {
   const [showCreateAdmin, setShowCreateAdmin] = useState(false);
   const [adminEmail, setAdminEmail] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
+  const [notificationPreferences, setNotificationPreferences] = useState<UserPreferences>(defaultNotificationPreferences);
+  const [preferencesLoading, setPreferencesLoading] = useState(true);
+  const [savingPreference, setSavingPreference] = useState<NotificationPreferenceKey | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadPreferences = async () => {
+      setPreferencesLoading(true);
+      try {
+        const res = await userService.getMe();
+        if (!active) return;
+        setNotificationPreferences({
+          ...defaultNotificationPreferences,
+          ...(res.data.preferences || {}),
+        });
+      } catch (error) {
+        if (!active) return;
+        toast({
+          title: 'Erro',
+          description: 'Nao foi possivel carregar preferencias de notificacao',
+          variant: 'destructive',
+        });
+      } finally {
+        if (active) setPreferencesLoading(false);
+      }
+    };
+
+    loadPreferences();
+
+    return () => {
+      active = false;
+    };
+  }, [toast]);
+
+  const handleTogglePreference = async (key: NotificationPreferenceKey) => {
+    const previousPreferences = notificationPreferences;
+    const nextPreferences = {
+      ...notificationPreferences,
+      [key]: !notificationPreferences[key],
+    };
+
+    setNotificationPreferences(nextPreferences);
+    setSavingPreference(key);
+
+    try {
+      const res = await userService.updatePreferences({ [key]: nextPreferences[key] } as Partial<UserPreferences>);
+      setNotificationPreferences({
+        ...defaultNotificationPreferences,
+        ...(res.data.preferences || {}),
+      });
+      toast({
+        title: 'Sucesso',
+        description: 'Preferencias de notificacao atualizadas',
+      });
+    } catch (error) {
+      setNotificationPreferences(previousPreferences);
+      toast({
+        title: 'Erro',
+        description: 'Nao foi possivel salvar a preferencia',
+        variant: 'destructive',
+      });
+    } finally {
+      setSavingPreference(null);
+    }
+  };
 
   const handleCreateAdmin = async () => {
     if (!adminEmail || !adminPassword) {
       toast({
         title: 'Erro',
-        description: 'Email e senha são obrigatórios',
+        description: 'Email e senha sao obrigatorios',
         variant: 'destructive',
       });
       return;
@@ -65,8 +151,8 @@ export default function Settings() {
       }
     } catch (error) {
       toast({
-        title: 'Erro de Conexão',
-        description: 'Não foi possível conectar à API',
+        title: 'Erro de Conexao',
+        description: 'Nao foi possivel conectar a API',
         variant: 'destructive',
       });
     }
@@ -101,11 +187,11 @@ export default function Settings() {
   const getHealthLabel = (status: string) => {
     switch (status) {
       case 'healthy':
-        return 'Saudável';
+        return 'Saudavel';
       case 'degraded':
         return 'Degradado';
       case 'down':
-        return 'Indisponível';
+        return 'Indisponivel';
       default:
         return 'Desconhecido';
     }
@@ -113,13 +199,12 @@ export default function Settings() {
 
   return (
     <div className="animate-fade-in">
-      <TopBar title="Configurações" subtitle="Configurações e administração do sistema MDM" />
+      <TopBar title="Configuracoes" subtitle="Configuracoes e administracao do sistema MDM" />
       <div className="p-6 space-y-6">
-        {/* Saúde do Sistema */}
         <div className="card-glass p-5">
           <div className="flex items-center gap-2 mb-4">
             <Shield className="w-4 h-4 text-primary" />
-            <h3 className="text-sm font-semibold text-foreground">Saúde do Sistema</h3>
+            <h3 className="text-sm font-semibold text-foreground">Saude do Sistema</h3>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             {[
@@ -149,11 +234,10 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* API Settings */}
         <div className="card-glass p-5">
           <div className="flex items-center gap-2 mb-4">
             <Server className="w-4 h-4 text-primary" />
-            <h3 className="text-sm font-semibold text-foreground">Conexão com a API</h3>
+            <h3 className="text-sm font-semibold text-foreground">Conexao com a API</h3>
           </div>
           <div className="space-y-4">
             <div>
@@ -168,7 +252,7 @@ export default function Settings() {
               </div>
             </div>
             <div>
-              <label className="text-xs text-muted-foreground block mb-1.5">Intervalo de Atualização Automática</label>
+              <label className="text-xs text-muted-foreground block mb-1.5">Intervalo de Atualizacao Automatica</label>
               <select
                 value={refreshInterval}
                 onChange={(e) => setRefreshInterval(e.target.value)}
@@ -183,7 +267,6 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* Gestão de Administradores */}
         <div className="card-glass p-5">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
@@ -234,11 +317,10 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* Backup & Restore */}
         <div className="card-glass p-5">
           <div className="flex items-center gap-2 mb-4">
             <Database className="w-4 h-4 text-primary" />
-            <h3 className="text-sm font-semibold text-foreground">Backup & Restauração</h3>
+            <h3 className="text-sm font-semibold text-foreground">Backup & Restauracao</h3>
           </div>
           <div className="space-y-2">
             <button
@@ -250,37 +332,46 @@ export default function Settings() {
             <button className="w-full px-4 py-2 text-sm rounded-md bg-secondary border border-border text-foreground hover:bg-muted transition-colors font-medium">
               Restaurar do Backup
             </button>
-            <p className="text-xs text-muted-foreground mt-2">Último backup: 05/03/2026 às 14:30:45</p>
+            <p className="text-xs text-muted-foreground mt-2">Ultimo backup: 05/03/2026 as 14:30:45</p>
           </div>
         </div>
 
-        {/* Notificações */}
         <div className="card-glass p-5">
           <div className="flex items-center gap-2 mb-4">
             <Bell className="w-4 h-4 text-primary" />
-            <h3 className="text-sm font-semibold text-foreground">Notificações</h3>
+            <h3 className="text-sm font-semibold text-foreground">Notificacoes</h3>
           </div>
           <div className="space-y-3">
-            {[
-              { label: 'Alertas de dispositivo offline', desc: 'Notificar quando dispositivo ficar offline por mais de 1h' },
-              { label: 'Falhas de compliance', desc: 'Notificar quando um dispositivo sair de conformidade' },
-              { label: 'Novos dispositivos', desc: 'Notificar quando um novo dispositivo se registrar' },
-              { label: 'Atualizações de sistema', desc: 'Notificar sobre atualizações disponíveis' },
-            ].map((n, idx) => {
-              const [enabled, setEnabled] = useState(true);
+            {preferencesLoading && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Carregando preferencias...
+              </div>
+            )}
+            {notificationSettings.map((n) => {
+              const enabled = notificationPreferences[n.key];
+              const saving = savingPreference === n.key;
               return (
-                <div key={idx} className="flex items-center justify-between p-3 rounded-md bg-muted/50 border border-border">
+                <div key={n.key} className="flex items-center justify-between p-3 rounded-md bg-muted/50 border border-border">
                   <div>
                     <p className="text-sm font-medium text-foreground">{n.label}</p>
                     <p className="text-xs text-muted-foreground mt-0.5">{n.desc}</p>
                   </div>
                   <button
-                    onClick={() => setEnabled(!enabled)}
-                    className={`w-10 h-5 rounded-full relative transition-colors ${ enabled ? 'bg-primary/20 border border-primary/30' : 'bg-muted border border-border' }`}
+                    type="button"
+                    onClick={() => handleTogglePreference(n.key)}
+                    disabled={preferencesLoading || !!savingPreference}
+                    aria-pressed={enabled}
+                    aria-label={n.label}
+                    className={`w-10 h-5 rounded-full relative transition-colors disabled:opacity-60 ${enabled ? 'bg-primary/20 border border-primary/30' : 'bg-muted border border-border'}`}
                   >
-                    <div
-                      className={`w-4 h-4 bg-primary rounded-full absolute top-0.5 transition-all ${ enabled ? 'right-0.5' : 'left-0.5' }`}
-                    />
+                    {saving ? (
+                      <Loader2 className="w-3 h-3 animate-spin text-primary absolute top-1 left-3.5" />
+                    ) : (
+                      <div
+                        className={`w-4 h-4 bg-primary rounded-full absolute top-0.5 transition-all ${enabled ? 'right-0.5' : 'left-0.5'}`}
+                      />
+                    )}
                   </button>
                 </div>
               );
@@ -288,17 +379,16 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* Informações do Sistema */}
         <div className="card-glass p-5">
           <div className="flex items-center gap-2 mb-4">
             <SettingsIcon className="w-4 h-4 text-primary" />
-            <h3 className="text-sm font-semibold text-foreground">Informações do Sistema</h3>
+            <h3 className="text-sm font-semibold text-foreground">Informacoes do Sistema</h3>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
             {[
-              { label: 'Versão do Console', value: '1.0.0' },
+              { label: 'Versao do Console', value: '1.0.0' },
               { label: 'Backend', value: 'FastAPI' },
-              { label: 'Autenticação', value: 'JWT' },
+              { label: 'Autenticacao', value: 'JWT' },
               { label: 'Banco de Dados', value: 'PostgreSQL' },
               { label: 'Devices Registrados', value: '42' },
               { label: 'Policies Ativas', value: '8' },

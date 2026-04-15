@@ -1,6 +1,6 @@
 from enum import Enum
 import uuid
-from typing import List, Optional
+from typing import Dict, List, Optional
 from datetime import datetime
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from backend.core.constants import SecurityQuestion
@@ -26,6 +26,24 @@ class UserResponse(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class UserPreferences(BaseModel):
+    offline_alerts: bool = True
+    compliance_failures: bool = True
+    new_devices: bool = True
+    system_updates: bool = True
+
+
+class UserPreferencesUpdate(BaseModel):
+    offline_alerts: Optional[bool] = None
+    compliance_failures: Optional[bool] = None
+    new_devices: Optional[bool] = None
+    system_updates: Optional[bool] = None
+
+
+class UserMeResponse(UserResponse):
+    preferences: Dict[str, bool] = Field(default_factory=dict)
 
 
 class RoleSimplified(BaseModel):

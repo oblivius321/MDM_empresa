@@ -62,13 +62,18 @@ export default function Policies() {
   };
 
   const handleDeletePolicy = async (id: number) => {
-    if (!confirm('Tem certeza que deseja desativar esta política?')) return;
+    if (!confirm('Tem certeza que deseja excluir definitivamente esta política?')) return;
     try {
       await policyV2Service.delete(id);
-      toast({ title: 'Sucesso', description: 'Política desativada.' });
+      toast({ title: 'Sucesso', description: 'Política excluída definitivamente.' });
       await fetchPolicies();
-    } catch (error) {
-      toast({ title: 'Erro', description: 'Falha ao desativar política.', variant: 'destructive' });
+    } catch (error: any) {
+      const detail = error.response?.data?.detail;
+      toast({
+        title: error.response?.status === 409 ? 'Política em uso' : 'Erro',
+        description: detail || 'Falha ao excluir política.',
+        variant: 'destructive',
+      });
     }
   };
 

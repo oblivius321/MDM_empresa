@@ -10,7 +10,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import com.elion.mdm.data.local.SecurePreferences
-import com.elion.mdm.services.MDMForegroundService
+import com.elion.mdm.domain.usecase.EnrollDeviceUseCase
+import com.elion.mdm.system.MDMState
+import com.elion.mdm.system.MDMStateMachine
 
 /**
  * AdminReceiver — Ponto de entrada obrigatório para o Device Owner (DPC).
@@ -59,24 +61,36 @@ class AdminReceiver : DeviceAdminReceiver() {
                 
                 Log.d(TAG, "Provisioning Bundle Recebido -> token_presente=${bootstrapToken.isNotEmpty()}, api=$apiUrl, profile=$profileId")
                 
-                // Inicia o state machine blindado
-                com.elion.mdm.system.EnrollmentStateMachine.transitionTo(
-                    context, 
-                    com.elion.mdm.system.EnrollmentState.BOOTSTRAPPED,
-                    mapOf(
+                if (bootstrapToken.isBlank() || apiUrl.isBlank()) {
+                    MDMStateMachine.transitionTo(
+                        context,
+                        MDMState.ERROR,
+                        error = "QR sem bootstrap_token ou api_url"
+                    )
+                    return@launch
+                }
+
+                MDMStateMachine.transitionTo(
+                    context,
+                    MDMState.REGISTERING,
+                    metadata = mapOf(
                         "bootstrap_token" to bootstrapToken,
                         "api_url" to apiUrl,
                         "profile_id" to profileId
                     )
                 )
-                
-                startMDMService(context)
+
+                EnrollDeviceUseCase(context.applicationContext).enroll(
+                    bootstrapToken,
+                    apiUrl,
+                    profileId.takeIf { it.isNotBlank() }
+                )
             } catch (e: Exception) {
                 Log.e(TAG, "Erro grave no Bootstrapping do QR: ${e.message}")
-                com.elion.mdm.system.EnrollmentStateMachine.transitionTo(
-                    context, 
-                    com.elion.mdm.system.EnrollmentState.ERROR_RECOVERY,
-                    mapOf("error" to "bootstrapping_failed", "details" to (e.message ?: ""))
+                MDMStateMachine.transitionTo(
+                    context,
+                    MDMState.ERROR,
+                    error = "bootstrapping_failed: ${e.message ?: ""}"
                 )
             } finally {
                 pendingResult.finish()
@@ -99,12 +113,4 @@ class AdminReceiver : DeviceAdminReceiver() {
         Log.w(TAG, "❌ Tentativa de senha FALHOU — Usuário: $user")
     }
 
-    private fun startMDMService(context: Context) {
-        try {
-            val serviceIntent = Intent(context, MDMForegroundService::class.java)
-            context.startForegroundService(serviceIntent)
-        } catch (e: Exception) {
-            Log.e(TAG, "Erro ao iniciar MDM Service: ${e.message}")
-        }
-    }
 }

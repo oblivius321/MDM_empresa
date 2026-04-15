@@ -80,7 +80,7 @@ class DeviceCommandCreate(BaseModel):
 
 class DeviceCommandResponse(BaseModel):
     """Status detalhado de um comando na fila."""
-    id: uuid.UUID
+    id: int
     device_id: str
     command_type: str
     payload: Optional[Dict] = None
@@ -89,7 +89,11 @@ class DeviceCommandResponse(BaseModel):
     created_at: datetime
     dispatched_at: Optional[datetime] = None
     executed_at: Optional[datetime] = None
+    execution_latency: Optional[float] = None  # seconds between dispatch and execution
     acked_at: Optional[datetime] = None
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None
+    operation_id: Optional[str] = None  # Google AMAPI operation resource name
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -14,6 +14,7 @@ class Device(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     device_id: Mapped[str] = mapped_column(String, unique=True, index=True)
+    external_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
     name: Mapped[str] = mapped_column(String)
     device_type: Mapped[str] = mapped_column(String)
     

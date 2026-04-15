@@ -2,7 +2,8 @@ services:
   backend:
     # Sem --reload, sem volume mount
     command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --workers 4
-    volumes: []
+    volumes:
+      - ./secrets:/app/secrets:ro
     restart: unless-stopped
 
   frontend:

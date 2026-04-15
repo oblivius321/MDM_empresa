@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDevices } from '@/hooks/useDevices';
 import { useMDMWebSocket } from '@/hooks/useMDMWebSocket';
+import { useToast } from '@/hooks/use-toast';
 import { TopBar } from '@/components/TopBar';
 import { StatusBadge } from '@/components/StatusBadge';
 import { EnrollmentModal } from '@/components/EnrollmentModal';
@@ -21,11 +22,12 @@ import {
   CheckCircle2,
   Plus,
   QrCode,
+  RefreshCw,
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
-import { ComplianceStatus } from '@/services/api';
+import { androidManagementService, ComplianceStatus } from '@/services/api';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 const STATUS_OPTIONS = [
@@ -66,8 +68,10 @@ function ComplianceIndicator({ status }: { status: ComplianceStatus }) {
 
 export default function Devices() {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [searchInput, setSearchInput] = useState('');
   const [enrollmentOpen, setEnrollmentOpen] = useState(false);
+  const [syncLoading, setSyncLoading] = useState(false);
   const {
     devices,
     loading,
@@ -99,6 +103,28 @@ export default function Devices() {
     setPage(1);
   };
 
+  const handleSyncDevices = async () => {
+    setSyncLoading(true);
+    try {
+      const res = await androidManagementService.syncDevices();
+      await refresh();
+      toast({
+        title: 'Sincronização concluída',
+        description: res.data.length
+          ? `${res.data.length} dispositivo(s) sincronizado(s) via Android Enterprise.`
+          : 'Nenhum dispositivo sincronizado ainda',
+      });
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao sincronizar',
+        description: err.response?.data?.detail || err.message || 'Falha ao buscar dispositivos no Google.',
+        variant: 'destructive',
+      });
+    } finally {
+      setSyncLoading(false);
+    }
+  };
+
   return (
     <div className="animate-fade-in">
       <TopBar
@@ -114,14 +140,25 @@ export default function Devices() {
         {/* Botão Novo Dispositivo */}
         <div className="flex items-center justify-between">
           <div />
-          <button
-            id="new-device-button"
-            onClick={() => setEnrollmentOpen(true)}
-            className="flex items-center gap-2 px-4 py-2.5 text-sm font-bold bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-all shadow-lg shadow-primary/20"
-          >
-            <QrCode className="w-4 h-4" />
-            Novo Dispositivo
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSyncDevices}
+              disabled={syncLoading}
+              className="flex items-center gap-2 px-4 py-2.5 text-sm font-bold border border-border bg-secondary text-foreground rounded-lg hover:bg-muted transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              <RefreshCw className={cn("w-4 h-4", syncLoading && "animate-spin")} />
+              Sincronizar dispositivos
+            </button>
+            <button
+              id="new-device-button"
+              onClick={() => setEnrollmentOpen(true)}
+              className="flex items-center gap-2 px-4 py-2.5 text-sm font-bold bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-all shadow-lg shadow-primary/20"
+            >
+              <QrCode className="w-4 h-4" />
+              Novo Dispositivo
+            </button>
+          </div>
         </div>
         {error && (
           <div className="flex items-center gap-3 px-4 py-3 rounded-md bg-status-locked/10 border border-status-locked/30 text-status-locked text-sm">
@@ -174,7 +211,7 @@ export default function Devices() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-border bg-muted/30">
-                  {['Nome', 'Modelo', 'Android', 'Status', 'Compliance', 'Último Check-in', 'Ações'].map((h) => (
+                  {['Nome', 'Modelo', 'Android', 'Status', 'Compliance', 'Última atividade', 'Ações'].map((h) => (
                     <th key={`header-${h}`} className="px-5 py-3 text-left text-xs font-medium text-muted-foreground whitespace-nowrap">
                       {h}
                     </th>
@@ -195,7 +232,7 @@ export default function Devices() {
                 ) : devices.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="px-5 py-12 text-center text-muted-foreground text-sm">
-                      {error ? 'Erro ao carregar dispositivos.' : 'Nenhum dispositivo encontrado.'}
+                      {error ? 'Erro ao carregar dispositivos.' : 'Nenhum dispositivo sincronizado ainda'}
                     </td>
                   </tr>
                 ) : devices.map((device, idx) => (
@@ -225,8 +262,8 @@ export default function Devices() {
                     </td>
                     <td className="px-5 py-3">
                       <span className="text-xs text-muted-foreground">
-                        {device.last_checkin
-                          ? format(parseISO(device.last_checkin), "dd/MM 'às' HH:mm", { locale: ptBR })
+                        {device.last_seen
+                          ? format(parseISO(device.last_seen), "dd/MM 'às' HH:mm", { locale: ptBR })
                           : '—'}
                       </span>
                     </td>

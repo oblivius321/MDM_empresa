@@ -50,8 +50,9 @@ class StateReporter(private val context: Context) {
             }
 
             val request = StateReportRequest(
-                state = stateMap,
-                stateHash = stateHash
+                health = if (dpm.isDeviceOwner()) "COMPLIANT" else "DEGRADED",
+                reasonCode = "STATE_REPORT",
+                policyHash = stateHash
             )
 
             try {
@@ -59,7 +60,7 @@ class StateReporter(private val context: Context) {
                 
                 // Retry com backoff exponencial
                 NetworkUtils.retryWithBackoff(times = 3) {
-                    val response = api.reportState(deviceId, request)
+                    val response = api.reportStatus(deviceId, request)
                     if (response.isSuccessful) {
                         prefs.lastStateHash = stateHash
                         prefs.lastStateReportMs = now

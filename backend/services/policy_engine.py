@@ -37,7 +37,7 @@ SCOPE_ORDER = {"global": 0, "group": 1, "device": 2}
 # ─── Categorias de diff para subcomandos granulares ──────────────────────────
 DRIFT_CATEGORIES = {
     "restrictions": "apply_restrictions",
-    "kiosk_mode": "apply_kiosk",
+    "kiosk": "apply_kiosk",
     "allowed_apps": "apply_app_whitelist",
     "blocked_apps": "apply_app_blacklist",
     "password_requirements": "apply_password_policy",
@@ -59,9 +59,7 @@ SYSTEM_DEFAULTS = {
         "install_unknown_sources_disabled": True
     },
     "allowed_apps": [
-        "com.elion.mdm",
-        "com.android.settings",
-        "com.google.android.apps.docs"
+        "com.elion.mdm"
     ],
     "config": {
         "checkin_interval_minutes": 15,
@@ -172,33 +170,47 @@ def merge_policies(policies: List[dict], profile_static: dict = None) -> dict:
 
     Order (Bottom to Top):
       1. System Defaults (Base)
-      2. Global Policies (Sorted by Priority)
-      3. Profile Policies (Sorted by Priority)
-      4. Profile Static Config (Fallback only for missing keys)
+      2. Profile Static Config
+      3. Global Policies (Sorted by Priority)
+      4. Profile Policies (Sorted by Priority)
     """
     # 1. Start with System Defaults
     merged = deepcopy(SYSTEM_DEFAULTS)
 
-    # 2 & 3. Merge Global and Profile Policies
+    # 2. Profile static config overrides defaults but not linked policies.
+    if profile_static:
+        static_config = _normalize_profile_static(profile_static)
+        merged = _deep_merge_two(merged, static_config)
+
+    # 3 & 4. Merge Global and Profile Policies
     # Assumimos que a lista 'policies' já foi filtrada e ordenada pelo repo
     for p in policies:
-        config = p.get("config", {})
+        config = _normalize_policy_config(p.get("config", {}))
         if config:
             merged = _deep_merge_two(merged, config)
 
-    # 4. Profile Static Fallback (No overwrite)
-    if profile_static:
-        static_config = _normalize_profile_static(profile_static)
-        for key, value in static_config.items():
-            if key not in merged or not merged[key]:
-                 merged[key] = deepcopy(value)
-            elif isinstance(merged[key], dict) and isinstance(value, dict):
-                 # Merge recursive fallback for sub-keys
-                 for sub_k, sub_v in value.items():
-                     if sub_k not in merged[key]:
-                         merged[key][sub_k] = deepcopy(sub_v)
-
     return merged
+
+
+def _normalize_policy_config(config: dict) -> dict:
+    """Convert legacy UI policy fields into the canonical backend shape."""
+    normalized = deepcopy(config or {})
+    kiosk_mode = normalized.pop("kiosk_mode", None)
+
+    if isinstance(kiosk_mode, dict):
+        kiosk = normalized.setdefault("kiosk", {})
+
+        if "enabled" in kiosk_mode:
+            kiosk["enabled"] = bool(kiosk_mode["enabled"])
+
+        package_name = kiosk_mode.get("package_name") or kiosk_mode.get("package")
+        if package_name:
+            kiosk["package_name"] = package_name
+            allowed_apps = normalized.setdefault("allowed_apps", [])
+            if isinstance(allowed_apps, list) and package_name not in allowed_apps:
+                allowed_apps.append(package_name)
+
+    return normalized
 
 
 def validate_policy_structure(policy: dict):

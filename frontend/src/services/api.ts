@@ -81,12 +81,16 @@ export function buildWebSocketUrl(path: string) {
   return `${wsProtocol}//${window.location.host}${joinPath(API_BASE_URL, path)}`;
 }
 
+const savedAccessToken =
+  typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+
 export const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 30000,  // Aumentado de 10s para 30s
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
+    ...(savedAccessToken ? { Authorization: `Bearer ${savedAccessToken}` } : {}),
   },
 });
 
@@ -108,6 +112,8 @@ api.interceptors.response.use(
 
       // Caso contrário, é erro de sessão do Admin (Dashboard)
       localStorage.removeItem('auth_user');
+      localStorage.removeItem('auth_token');
+      delete api.defaults.headers.common.Authorization;
       if (window.location.pathname !== '/login') {
         window.location.href = '/login';
       }
@@ -144,12 +150,14 @@ export interface PolicyState {
 export interface Device {
   id: string;
   device_id: string;
+  external_id?: string;
   name: string;
   imei: string;
   model?: string;
   android_version?: string;
   status: DeviceStatus;
   last_checkin: string;
+  last_seen?: string;
   company?: string;
   policies?: Policy[];
   policies_v2?: PolicyV2[];
@@ -185,6 +193,20 @@ export interface PolicyV2 {
   updated_at: string;
 }
 
+export interface DeviceCommand {
+  id: number;
+  device_id: string;
+  command_type: string;
+  payload?: any;
+  status: 'PENDING' | 'DISPATCHED' | 'EXECUTED' | 'FAILED' | 'ACKED';
+  created_at: string;
+  dispatched_at?: string;
+  executed_at?: string;
+  execution_latency?: number;
+  error_code?: string;
+  error_message?: string;
+}
+
 export interface DeviceEvent {
   id: string;
   type: string;
@@ -199,6 +221,43 @@ export interface DeviceSummary {
   offline: number;
   locked: number;
   last_global_checkin?: string;
+}
+
+export interface UserPreferences {
+  offline_alerts: boolean;
+  compliance_failures: boolean;
+  new_devices: boolean;
+  system_updates: boolean;
+}
+
+export interface CurrentUser {
+  id: number;
+  email: string;
+  is_admin: boolean;
+  is_active: boolean;
+  created_at: string;
+  preferences: UserPreferences;
+}
+
+export interface AuditLogRecord {
+  id: string;
+  user_id?: number | null;
+  user_email?: string | null;
+  action: string;
+  event_type?: string | null;
+  severity: string;
+  actor_type: string;
+  actor_id: string;
+  resource_type: string;
+  resource_id?: string | null;
+  device_id?: string | null;
+  details?: Record<string, any>;
+  is_success: boolean;
+  error_message?: string | null;
+  request_id?: string | null;
+  ip_address?: string | null;
+  user_agent?: string | null;
+  created_at: string;
 }
 
 export interface PaginatedDevices {
@@ -217,6 +276,7 @@ export function mapDevice(data: any): Device {
     // Garante que o frontend sempre tenha 'id' mapeado do 'device_id' do backend
     id: data.id || data.device_id || "unknown",
     device_id: data.device_id || data.id || "unknown",
+    last_seen: data.last_seen || data.last_checkin,
   };
 }
 
@@ -251,6 +311,9 @@ export const deviceService = {
 
   getTelemetry: (id: string) =>
     api.get<any>(`/devices/${id}/telemetry`),
+
+  getCommands: (id: string) =>
+    api.get<DeviceCommand[]>(`/devices/${id}/commands`),
 
   lock: (id: string) =>
     api.post(`/devices/${id}/lock`),
@@ -303,8 +366,16 @@ export const complianceService = {
 // ─── Log Endpoints ────────────────────────────────────────────────────────────
 
 export const logService = {
-  getAll: (params?: { device_id?: string; page?: number; size?: number }) =>
-    api.get('/logs', { params }),
+  getAll: (params?: { skip?: number; limit?: number; device_id?: string; page?: number; size?: number }) =>
+    api.get<AuditLogRecord[]>('/logs', { params }),
+};
+
+export const userService = {
+  getMe: () =>
+    api.get<CurrentUser>('/users/me'),
+
+  updatePreferences: (preferences: Partial<UserPreferences>) =>
+    api.patch<CurrentUser>('/users/me/preferences', preferences),
 };
 
 // ─── Profile & Enrollment Endpoints (Enterprise QR) ──────────────────────────
@@ -331,19 +402,6 @@ export interface MergedPolicyPreview {
 }
 
 
-export interface EnrollmentConfig {
-  enrollment_token: string;
-  api_url: string;
-  profile_name: string;
-  mode: 'single' | 'batch';
-  max_devices: number;
-  ttl_minutes: number;
-  expires_at: string;
-  admin_component: string;
-  apk_url: string;
-  apk_checksum: string;
-}
-
 export const enrollmentService = {
   listProfiles: () =>
     api.get<ProvisioningProfile[]>('/profiles'),
@@ -356,13 +414,79 @@ export const enrollmentService = {
 
   previewProfile: (id: string) =>
     api.get<MergedPolicyPreview>(`/profiles/${id}/preview`),
-
-  generateToken: (params: {
-    profile_id: string;
-    mode?: 'single' | 'batch';
-    max_devices?: number;
-    ttl_minutes?: number;
-  }) =>
-    api.post<EnrollmentConfig>('/enrollment/generate', null, { params }),
 };
 
+// ─── Android Management API (Google DPC oficial) ─────────────────────────
+
+export interface AndroidManagementStatus {
+  configured: boolean;
+  project_id?: string;
+  service_account_email?: string;
+  service_account_file?: string;
+  signup_url_name?: string;
+  signup_url?: string;
+  enterprise_name?: string;
+  enterprise_display_name?: string;
+  policy_name?: string;
+  last_error?: string;
+}
+
+export interface AndroidManagementSignupUrl {
+  signup_url_name: string;
+  signup_url: string;
+  callback_url: string;
+}
+
+export interface AndroidManagementEnrollmentToken {
+  id: string;
+  name: string;
+  qr_code: string;
+  expiration?: string;
+  expiration_timestamp?: string;
+  policy_name?: string;
+}
+
+export interface AndroidManagementDevice {
+  id: string;
+  name: string;
+  model?: string;
+  android_version?: string;
+  status: string;
+  last_checkin?: string;
+  compliance: string;
+}
+
+export interface AndroidManagementSyncedDevice {
+  external_id: string;
+  name: string;
+  model?: string;
+  android_version?: string;
+  status: string;
+  last_seen?: string;
+  compliance: string;
+}
+
+export const androidManagementService = {
+  status: () =>
+    api.get<AndroidManagementStatus>('/android-management/status'),
+
+  createSignupUrl: (callback_url?: string) =>
+    api.post<AndroidManagementSignupUrl>('/android-management/signup-url', { callback_url }),
+
+  upsertDefaultPolicy: () =>
+    api.post('/android-management/default-policy'),
+
+  createEnrollmentToken: (data: {
+    policy_id?: string;
+    duration_minutes?: number;
+    one_time_only?: boolean;
+    additional_data?: Record<string, any>;
+  } = {}) =>
+    api.post<AndroidManagementEnrollmentToken>('/android-management/enrollment-token', data),
+
+  listDevices: () =>
+    api.get<AndroidManagementDevice[]>('/android-management/devices'),
+
+  syncDevices: () =>
+    api.get<AndroidManagementSyncedDevice[]>('/android-management/devices/sync'),
+};

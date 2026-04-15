@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 from datetime import datetime
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -10,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from typing import List, Optional, Dict
 from backend.core import utcnow, CommandStatus
 from backend.models.device import Device
-from backend.models.policy import ProvisioningProfile, DevicePolicy, DeviceCommand
+from backend.models.policy import ProvisioningProfile, DevicePolicy, DeviceCommand, Policy
 from backend.models.audit_log import AuditLog
 from backend.models.telemetry import DeviceTelemetry
 
@@ -53,6 +54,29 @@ class DeviceRepository:
         )
         return result.scalars().all()
 
+    async def get_summary_stats(self) -> Dict:
+        """Retorna agregados usados pelos cards do dashboard."""
+        total_result = await self.db.execute(select(func.count(Device.id)))
+        total = int(total_result.scalar() or 0)
+
+        status_result = await self.db.execute(
+            select(Device.status, func.count(Device.id)).group_by(Device.status)
+        )
+        status_counts = {
+            (status or "unknown").lower(): int(count or 0)
+            for status, count in status_result.all()
+        }
+
+        checkin_result = await self.db.execute(select(func.max(Device.last_checkin)))
+
+        return {
+            "total": total,
+            "online": status_counts.get("online", 0),
+            "offline": status_counts.get("offline", 0),
+            "locked": status_counts.get("locked", 0),
+            "last_global_checkin": checkin_result.scalar(),
+        }
+
     async def update_device(self, device_id: str, updates: Dict) -> Optional[Device]:
         """Atualiza campos do dispositivo."""
         device = await self.get(device_id)
@@ -81,8 +105,10 @@ class DeviceRepository:
     async def get_profile(self, profile_id: uuid.UUID) -> Optional[ProvisioningProfile]:
         """Busca perfil de provisionamento ativo."""
         result = await self.db.execute(
-            select(ProvisioningProfile).where(
-                ProvisioningProfile.id == profile_id, 
+            select(ProvisioningProfile)
+            .options(selectinload(ProvisioningProfile.policies))
+            .where(
+                ProvisioningProfile.id == profile_id,
                 ProvisioningProfile.is_active == True
             )
         )
@@ -96,7 +122,9 @@ class DeviceRepository:
 
     async def list_profiles(self) -> List[ProvisioningProfile]:
         result = await self.db.execute(
-            select(ProvisioningProfile).where(ProvisioningProfile.is_active == True)
+            select(ProvisioningProfile)
+            .options(selectinload(ProvisioningProfile.policies))
+            .where(ProvisioningProfile.is_active == True)
         )
         return result.scalars().all()
 
@@ -188,7 +216,16 @@ class DeviceRepository:
 
     # ─── Command Operations (Idempotent Queue) ───────────────────────────────
 
-
+    async def get_command_history(self, device_id: str, limit: int = 50) -> List[DeviceCommand]:
+        """Recupera o histórico de comandos ordenados por mais recente."""
+        from backend.models.policy import CommandQueue
+        result = await self.db.execute(
+            select(CommandQueue)
+            .where(CommandQueue.device_id == device_id)
+            .order_by(CommandQueue.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
     async def transition_status(self, command: DeviceCommand, new_status: str, metadata: dict = None):
         """
         Realiza a transição de status de forma segura e auditável.
@@ -289,7 +326,7 @@ class DeviceRepository:
         )
         return result.scalars().all()
 
-    async def update_command_status(self, device_id: str, command_id: uuid.UUID, status: str, metadata: dict = None) -> bool:
+    async def update_command_status(self, device_id: str, command_id: int, status: str, metadata: dict = None) -> bool:
         """Wrapper seguro para transição de status."""
         result = await self.db.execute(
             select(DeviceCommand).where(
@@ -310,7 +347,7 @@ class DeviceRepository:
             await self.db.rollback()
             return False
 
-    async def update_device_command_status(self, command_id: uuid.UUID, status: str, sent_at: datetime = None) -> bool:
+    async def update_device_command_status(self, command_id: int, status: str, sent_at: datetime = None) -> bool:
         """Alias de compatibilidade com transição segura."""
         result = await self.db.execute(
             select(DeviceCommand).where(DeviceCommand.id == command_id)
@@ -329,11 +366,11 @@ class DeviceRepository:
             await self.db.rollback()
             return False
 
-    async def complete_command_secure(self, device_id: str, command_id: uuid.UUID) -> bool:
+    async def complete_command_secure(self, device_id: str, command_id: int) -> bool:
         """Marca comando como completo/sucesso de forma segura."""
         return await self.update_command_status(device_id, command_id, "completed")
 
-    async def fail_command_secure(self, device_id: str, command_id: uuid.UUID, error_msg: str) -> bool:
+    async def fail_command_secure(self, device_id: str, command_id: int, error_msg: str) -> bool:
         """Marca comando como falha com mensagem de erro."""
         result = await self.db.execute(
             select(DeviceCommand).where(
@@ -392,6 +429,13 @@ class DeviceRepository:
         
         # Tenta mapear ou usa um fallback seguro
         action = action_mapping.get(event_type, AuditActionEnum.COMMAND_UPDATE)
+        details = dict(payload or {})
+        audit_device_id = None
+        if device_id:
+            try:
+                audit_device_id = uuid.UUID(str(device_id))
+            except (TypeError, ValueError):
+                details.setdefault("device_id", str(device_id))
         
         log = AuditLog(
             action=action,
@@ -400,8 +444,8 @@ class DeviceRepository:
             severity=severity,
             actor_type=actor_type,
             actor_id=actor_id,
-            device_id=device_id,
-            details=payload or {},
+            device_id=audit_device_id,
+            details=details,
             user_id=user_id
         )
         

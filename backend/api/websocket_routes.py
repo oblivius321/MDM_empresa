@@ -384,6 +384,11 @@ async def _handle_cmd_ack(device_id: str, data: dict):
     """
     command_id = data.get("command_id")
     if not command_id: return
+    try:
+        command_id = int(command_id)
+    except (TypeError, ValueError):
+        logger.warning(f"[cmd_ack] command_id invalido: {command_id}")
+        return
 
     try:
         async with async_session_maker() as db:
@@ -412,6 +417,11 @@ async def _handle_cmd_result(device_id: str, data: dict):
     error_msg = data.get("error")
 
     if not command_id or exec_status not in ("success", "failed"):
+        return
+    try:
+        command_id = int(command_id)
+    except (TypeError, ValueError):
+        logger.warning(f"[cmd_result] command_id invalido: {command_id}")
         return
 
     try:

@@ -39,6 +39,13 @@ class ProvisioningProfile(Base):
         "ProvisioningProfilePolicy", back_populates="profile", cascade="all, delete-orphan"
     )
 
+    @property
+    def policy_ids(self) -> List[int]:
+        return [
+            assoc.policy_id
+            for assoc in sorted(self.policies, key=lambda assoc: assoc.priority)
+        ]
+
     def __repr__(self):
         return f"<ProvisioningProfile(name='{self.name}', v={self.version})>"
 
@@ -106,7 +113,7 @@ class DeviceCommand(Base):
     """
     __tablename__ = "command_queue"
 
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     device_id: Mapped[str] = mapped_column(String, ForeignKey("devices.device_id"), index=True)
 
     # Tipos: INSTALL_APP, LOCK, REBOOT, EXIT_KIOSK, WIPE, UNLOCK
@@ -149,9 +156,18 @@ class DeviceCommand(Base):
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
     max_retries: Mapped[int] = mapped_column(Integer, default=3)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
-    
     error_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # AMAPI Operation Tracking (Google long-running operation)
+    operation_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+
+    @property
+    def execution_latency(self) -> Optional[float]:
+        """Returns the latency in seconds between dispatch and execution."""
+        if self.executed_at and self.sent_at:
+            return (self.executed_at - self.sent_at).total_seconds()
+        return None
 
     # Relationships
     device: Mapped["Device"] = relationship("Device", back_populates="commands")

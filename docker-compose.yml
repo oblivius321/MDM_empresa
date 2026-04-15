@@ -59,6 +59,9 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       API_URL: ${API_URL}
+      ANDROID_MANAGEMENT_PROJECT_ID: ${ANDROID_MANAGEMENT_PROJECT_ID:-}
+      ANDROID_MANAGEMENT_SERVICE_ACCOUNT_FILE: ${ANDROID_MANAGEMENT_SERVICE_ACCOUNT_FILE:-}
+      ANDROID_MANAGEMENT_KIOSK_PACKAGE: ${ANDROID_MANAGEMENT_KIOSK_PACKAGE:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -66,6 +69,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app/backend
+      - ./secrets:/app/secrets:ro
     networks:
       - elion-network
     # Expondo 8200 para evitar conflitos (7924-8023 e 8081-8180 estão ocupados no host)
@@ -86,6 +90,8 @@ services:
       target: development
     container_name: elion-mdm-frontend
     restart: unless-stopped
+    environment:
+      VITE_ALLOWED_HOSTS: ${VITE_ALLOWED_HOSTS:-}
     depends_on:
       backend:
         condition: service_healthy

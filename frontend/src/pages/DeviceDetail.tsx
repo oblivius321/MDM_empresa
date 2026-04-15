@@ -6,7 +6,7 @@ import {
   ArrowLeft, Lock, RotateCw, RefreshCw, Smartphone, Shield,
   Clock, Building2, Hash, Cpu, CheckCircle2, XCircle, AlertCircle, Loader2, Link as LinkIcon, X,
   BatteryCharging, Battery, HardDrive, LayoutGrid, MapPin, 
-  ShieldCheck, ShieldAlert, ShieldOff, Activity, History, ListChecks
+  ShieldCheck, ShieldAlert, ShieldOff, Activity, History, ListChecks, Terminal
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -73,7 +73,7 @@ export default function DeviceDetail() {
   
   // ─── MDM Store & Websocket Sync ──────────────────────────────────────────
   const { complianceMap, handleComplianceUpdate } = useMDMStore();
-  const { device, telemetry, loading, error, refresh, runAction, actionLoading, actionResult } = useDevice(id!);
+  const { device, telemetry, commands, loading, error, refresh, runAction, actionLoading, actionResult } = useDevice(id!);
   
   // Local state for Policies V2
   const [isPolicyModalOpen, setIsPolicyModalOpen] = useState(false);
@@ -263,6 +263,7 @@ export default function DeviceDetail() {
                <TabsList className="bg-secondary/50 border border-border/50 p-1 rounded-xl w-full justify-start space-x-1">
                  <TabsTrigger value="geral" className="text-[10px] font-bold uppercase tracking-widest rounded-lg data-[state=active]:bg-card data-[state=active]:shadow-lg"><Activity className="w-3.5 h-3.5 mr-2" /> Visão Geral</TabsTrigger>
                  <TabsTrigger value="compliance" className="text-[10px] font-bold uppercase tracking-widest rounded-lg data-[state=active]:bg-card data-[state=active]:shadow-lg"><Shield className="w-3.5 h-3.5 mr-2" /> Compliance & Políticas</TabsTrigger>
+                 <TabsTrigger value="commands" className="text-[10px] font-bold uppercase tracking-widest rounded-lg data-[state=active]:bg-card data-[state=active]:shadow-lg"><Terminal className="w-3.5 h-3.5 mr-2" /> Comandos</TabsTrigger>
                  <TabsTrigger value="logs" className="text-[10px] font-bold uppercase tracking-widest rounded-lg data-[state=active]:bg-card data-[state=active]:shadow-lg"><History className="w-3.5 h-3.5 mr-2" /> Histórico Auditoria</TabsTrigger>
                </TabsList>
 
@@ -435,6 +436,66 @@ export default function DeviceDetail() {
                              </div>
                            )}
                         </div>
+                     </div>
+                  </div>
+               </TabsContent>
+
+               {/* TAB: COMANDOS */}
+               <TabsContent value="commands" className="mt-4 animate-in slide-in-from-bottom-4 duration-500">
+                  <div className="card-glass p-0 overflow-hidden">
+                     <div className="p-5 border-b border-border bg-muted/20 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                           <Terminal className="w-4 h-4 text-primary" />
+                           <h3 className="text-sm font-bold uppercase tracking-tight">Fila de Comandos</h3>
+                        </div>
+                     </div>
+                     <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                           <thead className="bg-muted/30 border-b border-border">
+                              <tr>
+                                 <th className="px-5 py-3 text-left font-bold uppercase tracking-widest text-muted-foreground">Comando</th>
+                                 <th className="px-5 py-3 text-left font-bold uppercase tracking-widest text-muted-foreground">Status</th>
+                                 <th className="px-5 py-3 text-left font-bold uppercase tracking-widest text-muted-foreground">Criação</th>
+                                 <th className="px-5 py-3 text-left font-bold uppercase tracking-widest text-muted-foreground">Modificação</th>
+                                 <th className="px-5 py-3 text-left font-bold uppercase tracking-widest text-muted-foreground">Latência</th>
+                                 <th className="px-5 py-3 text-left font-bold uppercase tracking-widest text-muted-foreground">Erro</th>
+                              </tr>
+                           </thead>
+                           <tbody className="divide-y divide-border/30">
+                             {commands && commands.length > 0 ? commands.map((cmd: any) => (
+                               <tr key={cmd.id} className="hover:bg-muted/20 transition-colors">
+                                  <td className="px-5 py-3 font-mono font-bold">{cmd.command_type}</td>
+                                  <td className="px-5 py-3">
+                                     <Badge variant="outline" className={cn(
+                                       "font-bold text-[9px]",
+                                       cmd.status === 'EXECUTED' || cmd.status === 'ACKED' ? "text-status-online border-status-online/50" :
+                                       cmd.status === 'FAILED' ? "text-status-locked border-status-locked/50" :
+                                       cmd.status === 'DISPATCHED' ? "text-status-syncing border-status-syncing/50" : ""
+                                     )}>
+                                        {cmd.status === 'PENDING' && 'Pendente'}
+                                        {cmd.status === 'DISPATCHED' && 'Enviado'}
+                                        {cmd.status === 'EXECUTED' && 'Executado'}
+                                        {cmd.status === 'ACKED' && 'Confirmado'}
+                                        {cmd.status === 'FAILED' && 'Falhou'}
+                                        {(!['PENDING', 'DISPATCHED', 'EXECUTED', 'ACKED', 'FAILED'].includes(cmd.status)) && cmd.status}
+                                     </Badge>
+                                  </td>
+                                  <td className="px-5 py-3 text-muted-foreground">{cmd.created_at ? format(parseISO(cmd.created_at), 'HH:mm:ss dd/MM', { locale: ptBR }) : '-'}</td>
+                                  <td className="px-5 py-3 text-muted-foreground">{cmd.executed_at ? format(parseISO(cmd.executed_at), 'HH:mm:ss dd/MM', { locale: ptBR }) : cmd.dispatched_at ? format(parseISO(cmd.dispatched_at), 'HH:mm:ss dd/MM', { locale: ptBR }) : '-'}</td>
+                                  <td className="px-5 py-3 font-mono text-[10px]">
+                                     {cmd.execution_latency != null ? `${cmd.execution_latency.toFixed(1)}s` : '-'}
+                                  </td>
+                                  <td className="px-5 py-3">
+                                     {cmd.error_message ? <span className="text-status-locked truncate max-w-[150px] block" title={cmd.error_message}>{cmd.error_message}</span> : <span className="text-muted-foreground opacity-50">-</span>}
+                                  </td>
+                               </tr>
+                             )) : (
+                               <tr>
+                                  <td colSpan={6} className="px-5 py-10 text-center text-muted-foreground font-medium">Nenhum comando na fila</td>
+                               </tr>
+                             )}
+                           </tbody>
+                        </table>
                      </div>
                   </div>
                </TabsContent>

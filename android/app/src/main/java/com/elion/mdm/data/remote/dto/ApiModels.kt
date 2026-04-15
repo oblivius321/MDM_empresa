@@ -2,13 +2,20 @@ package com.elion.mdm.data.remote.dto
 
 import com.google.gson.annotations.SerializedName
 
+enum class DeviceHealth {
+    COMPLIANT,
+    DEGRADED,
+    NON_COMPLIANT,
+    UNKNOWN
+}
+
 // ─── Enrollment ───────────────────────────────────────────────────────────────
 
 data class EnrollmentRequest(
     @SerializedName("device_id")        val deviceId: String,
     @SerializedName("name")             val name: String,
     @SerializedName("device_type")       val deviceType: String = "android",
-    @SerializedName("bootstrap_secret") val bootstrapSecret: String,
+    @SerializedName("bootstrap_token")  val bootstrapSecret: String,
     @SerializedName("extra_data")       val extraData: Map<String, String>? = null
 )
 

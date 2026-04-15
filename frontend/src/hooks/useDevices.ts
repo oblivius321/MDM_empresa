@@ -101,6 +101,7 @@ export function useDevices(options: UseDevicesOptions = {}) {
 export function useDevice(id: string) {
   const [device, setDevice] = useState<Device | null>(null);
   const [telemetry, setTelemetry] = useState<any | null>(null);
+  const [commands, setCommands] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -114,10 +115,14 @@ export function useDevice(id: string) {
       setDevice(res.data);
 
       try {
-        const telRes = await deviceService.getTelemetry(id);
+        const [telRes, cmdRes] = await Promise.all([
+          deviceService.getTelemetry(id),
+          deviceService.getCommands(id)
+        ]);
         setTelemetry(telRes.data);
+        setCommands(cmdRes.data);
       } catch (e) {
-        console.error("Failed to fetch telemetry", e);
+        console.error("Failed to fetch telemetry or commands", e);
       }
 
     } catch (err: any) {
@@ -150,5 +155,5 @@ export function useDevice(id: string) {
     }
   };
 
-  return { device, telemetry, loading, error, refresh: fetchDevice, runAction, actionLoading, actionResult };
+  return { device, telemetry, commands, loading, error, refresh: fetchDevice, runAction, actionLoading, actionResult };
 }
