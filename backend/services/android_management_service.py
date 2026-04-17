@@ -198,6 +198,7 @@ class AndroidManagementService:
         *,
         params: Optional[dict[str, Any]] = None,
         body: Optional[dict[str, Any]] = None,
+        allow_not_found: bool = False,
     ) -> dict[str, Any]:
         url = f"{AMAPI_BASE_URL}/{path.lstrip('/')}"
 
@@ -220,6 +221,9 @@ class AndroidManagementService:
         response = await asyncio.to_thread(send_request)
 
         if response.status_code >= 400:
+            if allow_not_found and response.status_code == 404:
+                return {"not_found": True}
+
             error_data = {}
             try:
                 error_data = response.json()
@@ -292,6 +296,23 @@ class AndroidManagementService:
         response = await self._request("GET", f"{enterprise_name}/devices")
         devices = response.get("devices", [])
         return devices if isinstance(devices, list) else []
+
+    async def delete_device(self, device_name: str) -> dict[str, Any]:
+        clean_device_name = str(device_name or "").strip().strip("/")
+        if not clean_device_name:
+            raise HTTPException(status_code=400, detail="device_name obrigatorio para exclusao AMAPI.")
+        if not clean_device_name.startswith("enterprises/") or "/devices/" not in clean_device_name:
+            raise HTTPException(
+                status_code=400,
+                detail="device_name AMAPI deve estar no formato enterprises/{enterprise}/devices/{device}.",
+            )
+
+        response = await self._request("DELETE", clean_device_name, allow_not_found=True)
+        logger.info(
+            "AMAPI_DEVICE_DELETED",
+            extra={"device_name": clean_device_name, "not_found": bool(response.get("not_found"))},
+        )
+        return response
 
     async def get_operation(self, operation_name: str) -> dict[str, Any]:
         """Poll a Google long-running operation by its full resource name.

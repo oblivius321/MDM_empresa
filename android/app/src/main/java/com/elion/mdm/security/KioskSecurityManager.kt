@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.elion.mdm.data.local.SecurePreferences
 import com.elion.mdm.domain.DevicePolicyHelper
+import com.elion.mdm.system.DevMode
 import kotlinx.coroutines.*
 
 /**
@@ -35,6 +36,10 @@ class KioskSecurityManager(context: Context) {
     // ─── Controle ─────────────────────────────────────────────────────────────
 
     fun startWatchdog() {
+        if (DevMode.isDevMode()) {
+            DevMode.log("Kiosk watchdog disabled in DEV build")
+            return
+        }
         if (watchdogJob?.isActive == true) {
             Log.d(TAG, "Watchdog já está ativo")
             return
@@ -63,6 +68,7 @@ class KioskSecurityManager(context: Context) {
     // ─── Verificação de Segurança ─────────────────────────────────────────────
 
     private fun performSecurityCheck() {
+        if (DevMode.isDevMode()) return
         if (!prefs.isKioskEnabled) return  // Kiosk não está ativo, nada a verificar
 
         var violations = 0
@@ -108,6 +114,7 @@ class KioskSecurityManager(context: Context) {
     }
 
     fun isSecure(): Boolean {
+        if (DevMode.isDevMode()) return true
         if (!prefs.isKioskEnabled) return true
         return dpm.isDeviceOwner() && dpm.isInLockTaskMode()
     }

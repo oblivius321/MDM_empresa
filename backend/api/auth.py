@@ -107,7 +107,7 @@ async def login(request: Request, response: Response, credentials: UserLogin, db
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60
     )
     
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {"access_token": access_token, "token_type": "bearer", "user": user}
 
 @router.post("/logout")
 async def logout(response: Response):

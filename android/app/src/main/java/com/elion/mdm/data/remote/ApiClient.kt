@@ -3,6 +3,7 @@ package com.elion.mdm.data.remote
 import android.content.Context
 import com.elion.mdm.BuildConfig
 import com.elion.mdm.data.local.SecurePreferences
+import com.elion.mdm.system.DevMode
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Response
@@ -52,7 +53,7 @@ object ApiClient {
 
     private fun buildOkHttp(context: Context): OkHttpClient {
         val logging = HttpLoggingInterceptor().apply {
-            level = if (BuildConfig.DEBUG)
+            level = if (BuildConfig.IS_DEV)
                 HttpLoggingInterceptor.Level.BODY
             else
                 HttpLoggingInterceptor.Level.NONE
@@ -74,6 +75,7 @@ object ApiClient {
     private class URLInterceptor : Interceptor {
         override fun intercept(chain: Interceptor.Chain): Response {
             val request = chain.request()
+            if (!BuildConfig.IS_DEV) return chain.proceed(request)
             android.util.Log.i("ElionAPI", "🚀 REQUISIÇÃO: [${request.method}] ${request.url}")
             return chain.proceed(request)
         }
@@ -86,6 +88,7 @@ object ApiClient {
             val prefs = SecurePreferences(context)
             val req   = chain.request().newBuilder().apply {
                 addHeader("Content-Type", "application/json")
+                addHeader("X-MDM-MODE", DevMode.modeHeader())
                 prefs.deviceToken?.takeIf { it.isNotBlank() }?.let {
                     // 🛡️ Alinhamento Backend Enterprise: Usar header customizado para Devices
                     addHeader("X-Device-Token", it)

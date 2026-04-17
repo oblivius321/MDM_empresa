@@ -3,13 +3,18 @@ package com.elion.mdm.presentation
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.elion.mdm.data.local.SecurePreferences
+import com.elion.mdm.domain.DevicePolicyHelper
 import com.elion.mdm.domain.usecase.DeviceStatus
 import com.elion.mdm.domain.usecase.EnrollDeviceUseCase
 import com.elion.mdm.domain.usecase.GetDeviceStatusUseCase
+import com.elion.mdm.system.DevMode
+import com.elion.mdm.system.KioskManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import org.json.JSONArray
 
 /**
  * MainViewModel — gerencia o estado da tela principal (enrollment + status).
@@ -21,6 +26,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val enrollUseCase     = EnrollDeviceUseCase(app)
     private val statusUseCase     = GetDeviceStatusUseCase(app)
+    private val kioskManager      = KioskManager(app)
+    private val prefs             = SecurePreferences(app)
+    private val dpm               = DevicePolicyHelper(app)
 
     // ─── Estado da UI ─────────────────────────────────────────────────────────
 
@@ -31,50 +39,103 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         refreshStatus()
     }
 
+    fun getCurrentState(): com.elion.mdm.domain.MdmState = prefs.mdmState
+
     // ─── Actions ──────────────────────────────────────────────────────────────
 
-    fun enroll(bootstrapSecret: String, backendUrl: String, profileId: String? = null) {
+    fun enroll(bootstrapToken: String, backendUrl: String, profileId: String? = null) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
 
-            enrollUseCase.enroll(bootstrapSecret, backendUrl, profileId)
+            enrollUseCase.enroll(bootstrapToken, backendUrl, profileId)
                 .onSuccess {
                     _uiState.value = _uiState.value.copy(
                         isLoading    = false,
-                        deviceStatus = statusUseCase()
+                        deviceStatus = statusUseCase(),
+                        actionMessage = null
                     )
                 }
                 .onFailure { err ->
                     _uiState.value = _uiState.value.copy(
                         isLoading    = false,
-                        errorMessage = err.message ?: "Erro desconhecido no enrollment"
+                        deviceStatus = statusUseCase(),
+                        errorMessage = err.message ?: "Erro desconhecido no enrollment",
+                        actionMessage = null
                     )
                 }
         }
     }
 
-    /**
-     * Verifica se há metadados de bootstrapping pendentes (vidos do QR Code)
-     * e dispara o enrollment sem intervenção humana se possível.
-     */
-    fun checkAutoEnrollment() {
+    fun enableKioskMode() {
         viewModelScope.launch {
-            val info = com.elion.mdm.system.MDMStateMachine.getStateInfo(getApplication())
-            if (info.state == com.elion.mdm.system.MDMState.INIT || info.state == com.elion.mdm.system.MDMState.REGISTERING) {
-                val profileId = info.metadata["profile_id"]
-                val apiUrl = info.metadata["api_url"]
-                val bootstrapToken = info.metadata["bootstrap_token"]
-                
-                if (!apiUrl.isNullOrBlank() && !bootstrapToken.isNullOrBlank()) {
-                    android.util.Log.i("ElionViewModel", "Auto-Enrollment disparado para profile: ${profileId ?: "token-bound"}")
-                    enroll(bootstrapToken, apiUrl, profileId)
+            _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null, actionMessage = null)
+
+            runCatching {
+                check(DevMode.isDevMode() || dpm.isDeviceOwner()) {
+                    "Kiosk mode requires Device Owner"
                 }
+
+                kioskManager.enableKiosk(readAllowedPackages())
+                prefs.mdmState = com.elion.mdm.domain.MdmState.KIOSK_ACTIVE
+            }.onSuccess {
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    deviceStatus = statusUseCase(),
+                    actionMessage = "Kiosk mode enabled"
+                )
+            }.onFailure { err ->
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    deviceStatus = statusUseCase(),
+                    errorMessage = err.message ?: "Failed to enable kiosk mode"
+                )
             }
         }
     }
 
+    fun saveAllowedKioskApps(packages: List<String>) {
+        viewModelScope.launch {
+            val cleanPackages = packages
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .distinct()
+
+            writeAllowedPackages(cleanPackages)
+
+            if (prefs.isKioskEnabled) {
+                kioskManager.enableKiosk(cleanPackages)
+            }
+
+            _uiState.value = _uiState.value.copy(
+                deviceStatus = statusUseCase(),
+                errorMessage = null,
+                actionMessage = "${cleanPackages.size} allowed app(s) saved"
+            )
+        }
+    }
+
     fun refreshStatus() {
-        _uiState.value = _uiState.value.copy(deviceStatus = statusUseCase())
+        _uiState.value = _uiState.value.copy(
+            deviceStatus = statusUseCase(),
+            mdmState = prefs.mdmState,
+            errorMessage = null,
+            actionMessage = null
+        )
+    }
+
+    private fun readAllowedPackages(): List<String> {
+        return try {
+            val array = JSONArray(prefs.allowedAppsJson)
+            (0 until array.length()).map { array.getString(it) }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun writeAllowedPackages(packages: List<String>) {
+        val array = JSONArray()
+        packages.forEach { array.put(it) }
+        prefs.allowedAppsJson = array.toString()
     }
 
     // ─── UI State ─────────────────────────────────────────────────────────────
@@ -82,6 +143,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     data class UiState(
         val isLoading    : Boolean      = false,
         val errorMessage : String?      = null,
-        val deviceStatus : DeviceStatus? = null
+        val actionMessage: String?      = null,
+        val deviceStatus : DeviceStatus? = null,
+        val mdmState     : com.elion.mdm.domain.MdmState = com.elion.mdm.domain.MdmState.UNCONFIGURED
     )
 }

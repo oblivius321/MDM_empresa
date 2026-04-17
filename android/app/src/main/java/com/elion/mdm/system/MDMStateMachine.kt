@@ -107,6 +107,7 @@ object MDMStateMachine {
 
                 StateInfo(
                     state = state,
+                    timestamp = (map["timestamp"] as? Double)?.toLong() ?: 0L,
                     retryCount = (map["retry_count"] as? Double)?.toInt() ?: 0,
                     cooldownUntil = (map["cooldown_until"] as? Double)?.toLong() ?: 0L,
                     lastError = map["last_error"] as? String,
@@ -120,6 +121,7 @@ object MDMStateMachine {
 
     data class StateInfo(
         val state: MDMState,
+        val timestamp: Long = 0L,
         val retryCount: Int = 0,
         val cooldownUntil: Long = 0L,
         val lastError: String? = null,

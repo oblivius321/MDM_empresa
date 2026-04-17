@@ -9,7 +9,7 @@ class CommandStatus:
     VERIFIED = "VERIFIED"
     
     # Estados terminais
-    TERMINAL_STATES = [FAILED, VERIFIED]
+    TERMINAL_STATES = [FAILED, ACKED, VERIFIED]
 
 class SecurityQuestion(Enum):
     PET = "Qual o nome do seu primeiro animal de estimação?"

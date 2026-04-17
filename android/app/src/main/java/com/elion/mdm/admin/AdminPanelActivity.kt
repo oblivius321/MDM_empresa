@@ -247,9 +247,12 @@ class AdminPanelActivity : AppCompatActivity() {
 
     private fun showAppManagementDialog() {
         val pm = packageManager
-        val installedApps = pm.getInstalledApplications(0)
-            .filter { pm.getLaunchIntentForPackage(it.packageName) != null }
+        val intent = Intent(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
+        val resolveInfos = pm.queryIntentActivities(intent, 0)
+        
+        val installedApps = resolveInfos.map { it.activityInfo.applicationInfo }
             .filter { it.packageName != packageName }  // Excluir o próprio app MDM
+            .distinctBy { it.packageName }
             .sortedBy { pm.getApplicationLabel(it).toString().lowercase() }
 
         val currentAllowed = getAllowedPackages().toMutableSet()

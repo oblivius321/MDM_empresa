@@ -65,6 +65,18 @@
     </LinearLayout>
 
     <!-- ─── Divisor ──────────────────────────────────── -->
+    <TextView
+        android:id="@+id/tv_dev_banner"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#D32F2F"
+        android:gravity="center"
+        android:padding="10dp"
+        android:text="DEV MODE"
+        android:textColor="#FFFFFF"
+        android:textStyle="bold"
+        android:visibility="gone" />
+
     <View
         android:layout_width="match_parent"
         android:layout_height="1dp"

@@ -12,9 +12,16 @@ import com.elion.mdm.R
 import com.elion.mdm.data.local.SecurePreferences
 import com.elion.mdm.data.remote.ApiClient
 import com.elion.mdm.data.remote.dto.CheckinRequest
+import com.elion.mdm.data.remote.dto.DeviceCommand
 import com.elion.mdm.domain.CommandHandler
 import com.elion.mdm.domain.DevicePolicyHelper
 import com.elion.mdm.presentation.MainActivity
+import com.elion.mdm.system.DevMode
+import com.google.gson.Gson
+import com.google.gson.JsonElement
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.*
 import okhttp3.*
 import java.util.concurrent.TimeUnit
@@ -66,6 +73,7 @@ class MDMForegroundService : Service() {
     private lateinit var attestationService: com.elion.mdm.security.AttestationService
 
     private var checkinJob      : Job? = null
+    private var engineJob       : Job? = null
     private var commandPollJob  : Job? = null
     private var wsReconnectJob  : Job? = null
     private var kioskWatchdogJob: Job? = null
@@ -99,6 +107,7 @@ class MDMForegroundService : Service() {
 
         if (prefs.hasValidToken()) {
             startMDMEngine()
+            startCommandPollLoop()
             connectWebSocket()
         } else {
             Log.w(TAG, "Dispositivo não enrollado — aguardando enrollment")
@@ -108,48 +117,37 @@ class MDMForegroundService : Service() {
     }
 
     private fun startMDMEngine() {
-        serviceScope.launch {
+        if (engineJob?.isActive == true) return
+        engineJob = serviceScope.launch {
             while (isActive) {
-                val stateInfo = com.elion.mdm.system.MDMStateMachine.getStateInfo(this@MDMForegroundService)
+                val state = prefs.mdmState
                 
-                if (stateInfo.isInCooldown()) {
-                    Log.d(TAG, "Engine em COOLDOWN... aguardando.")
-                    delay(30_000)
-                    continue
-                }
+                Log.d(TAG, "MDM Engine Tick - State: $state")
 
-                when (stateInfo.state) {
-                    com.elion.mdm.system.MDMState.INIT -> {
-                        // Aguarda enrollment via UI (Phase 3A automatismo seria disparado aqui)
+                when (state) {
+                    com.elion.mdm.domain.MdmState.UNCONFIGURED -> {
+                        // Aguarda enrollment
                         delay(10_000)
                     }
-                    com.elion.mdm.system.MDMState.REGISTERING -> {
+                    com.elion.mdm.domain.MdmState.ENROLLING -> {
                         // Enrollment em curso
                         delay(2000)
                     }
-                    com.elion.mdm.system.MDMState.PROVISIONING -> {
-                        runBootstrap()
-                    }
-                    com.elion.mdm.system.MDMState.ENFORCING -> {
-                        runEnforcement()
-                    }
-                    com.elion.mdm.system.MDMState.OPERATIONAL -> {
+                    com.elion.mdm.domain.MdmState.ENROLLED,
+                    com.elion.mdm.domain.MdmState.KIOSK_ACTIVE -> {
                         // Loop normal de manutenção
                         performCheckin()
                         
-                        // ✅ NOVO (Fase 4): Atestação de Hardware Periódica
-                        // Executa apenas se não houver atestação recente ou se solicitado pelo backend
+                        // Atestação de Hardware
                         attestationService.performAttestation().onFailure {
-                             Log.w(TAG, "Atestação de hardware falhou (vulnerabilidade potencial): ${it.message}")
+                             Log.w(TAG, "Atestação de hardware falhou: ${it.message}")
                         }
 
-                        startKioskWatchdogLoop() // Reaproveita o watchdog
+                        if (state == com.elion.mdm.domain.MdmState.KIOSK_ACTIVE) {
+                            startKioskWatchdogLoop()
+                        }
+                        
                         delay(prefs.checkinIntervalSeconds * 1000L)
-                    }
-                    com.elion.mdm.system.MDMState.ERROR -> {
-                        Log.e(TAG, "Estado de ERRO detectado: ${stateInfo.lastError}")
-                        // Se falhou muitas vezes, o transitionTo já cuidou do cooldown
-                        delay(60_000)
                     }
                 }
             }
@@ -202,14 +200,19 @@ class MDMForegroundService : Service() {
     }
 
     private fun startKioskWatchdogLoop() {
-        kioskWatchdogJob?.cancel()
+        if (DevMode.isDevMode()) {
+            return
+        }
+        if (kioskWatchdogJob?.isActive == true) return
+        
         kioskWatchdogJob = serviceScope.launch {
             while (isActive) {
-                if (prefs.isKioskEnabled && !dpmHelper.isInLockTaskMode()) {
-                    Log.e(TAG, "🔥 CENTRAL WATCHDOG: Modo Kiosk Corrompido/Desligado detectado! Forçando reentrada Imediata.")
+                val state = prefs.mdmState
+                if (state == com.elion.mdm.domain.MdmState.KIOSK_ACTIVE && !dpmHelper.isInLockTaskMode()) {
+                    Log.e(TAG, "🔥 WATCHDOG: Kiosk violado! Forçando reentrada.")
                     com.elion.mdm.launcher.KioskLauncherActivity.launch(this@MDMForegroundService)
                 }
-                delay(15_000) // Verificação constante a cada 15 segundos
+                delay(15_000)
             }
         }
     }
@@ -279,6 +282,8 @@ class MDMForegroundService : Service() {
                     runCatching { fetchAndExecuteCommands() }
                         .onFailure { Log.e(TAG, "Command poll falhou: ${it.message}") }
                 }
+                runCatching { com.elion.mdm.system.OfflineQueue.flushNetwork(this@MDMForegroundService) }
+                    .onFailure { Log.e(TAG, "OfflineQueue flush falhou: ${it.message}") }
                 delay(30_000) // poll a cada 30s APENAS como fallback ao WebSocket
             }
         }
@@ -305,6 +310,8 @@ class MDMForegroundService : Service() {
     private fun connectWebSocket() {
         val token    = prefs.deviceToken ?: return
         val deviceId = prefs.deviceId ?: return
+        if (isWsConnected && webSocket != null) return
+        webSocket?.cancel()
         val baseUrl  = ApiClient.normalizeRootUrl(prefs.backendUrl)
             .replace("https://", "wss://")
             .replace("http://", "ws://")
@@ -317,6 +324,7 @@ class MDMForegroundService : Service() {
         val request  = Request.Builder()
             .url(wsUrl)
             .addHeader("X-Device-Token", token)
+            .addHeader("X-MDM-MODE", DevMode.modeHeader())
             .build()
 
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
@@ -340,12 +348,17 @@ class MDMForegroundService : Service() {
                 serviceScope.launch {
                     runCatching {
                         // Tenta dar parse direto na mensagem como um DeviceCommand
-                        val gson = com.google.gson.Gson()
-                        val command = gson.fromJson(text, com.elion.mdm.data.remote.dto.DeviceCommand::class.java)
+                        if (replyToServerPingIfNeeded(ws, text)) {
+                            return@runCatching
+                        }
+
+                        val command = parseWsCommand(text)
                         
-                        if (command != null && command.id != 0L && command.type.isNotEmpty()) {
+                        if (command != null && command.id != 0L && command.type.isNotBlank()) {
                             Log.i(TAG, "Comando WS parseado com sucesso: #${command.id} do tipo ${command.type}")
                             cmdHandler.processCommands(listOf(command))
+                        } else if (isWsControlMessage(text)) {
+                            Log.d(TAG, "Mensagem WS de controle recebida")
                         } else {
                             // Se for apenas um 'ping' genérico, cai de volta para buscar os comandos
                             Log.d(TAG, "Mensagem WS não é um comando válido, disparando fetch de comandos pendentes...")
@@ -372,6 +385,74 @@ class MDMForegroundService : Service() {
                 scheduleWsReconnect()
             }
         })
+    }
+
+    private fun replyToServerPingIfNeeded(ws: WebSocket, text: String): Boolean {
+        val type = parseJsonObject(text)?.stringOrNull("type") ?: return false
+        if (type.equals("server_ping", ignoreCase = true)) {
+            ws.send("""{"type":"ping"}""")
+            return true
+        }
+        return false
+    }
+
+    private fun isWsControlMessage(text: String): Boolean {
+        val type = parseJsonObject(text)?.stringOrNull("type") ?: return false
+        return type in setOf("CONNECTED", "connected", "pong", "error", "compliance_status", "server_ping")
+    }
+
+    private fun parseWsCommand(text: String): DeviceCommand? {
+        val obj = parseJsonObject(text) ?: return null
+        val envelopeType = obj.stringOrNull("type")
+
+        if (envelopeType.equals("command", ignoreCase = true)) {
+            val id = obj.longOrNull("command_id") ?: obj.longOrNull("id") ?: return null
+            val action = obj.stringOrNull("action") ?: obj.stringOrNull("command_type") ?: return null
+            return DeviceCommand(
+                id = id,
+                type = action,
+                payload = jsonPayloadToMap(obj.get("payload"))
+            )
+        }
+
+        val action = obj.stringOrNull("command_type") ?: obj.stringOrNull("action")
+            ?: obj.stringOrNull("type")?.takeUnless { it.equals("command", ignoreCase = true) }
+        val id = obj.longOrNull("id") ?: obj.longOrNull("command_id")
+
+        if (id == null || action.isNullOrBlank() || isWsControlMessage(text)) {
+            return null
+        }
+
+        return DeviceCommand(
+            id = id,
+            type = action,
+            payload = jsonPayloadToMap(obj.get("payload"))
+        )
+    }
+
+    private fun parseJsonObject(text: String): JsonObject? {
+        return runCatching {
+            val element = JsonParser.parseString(text)
+            if (element.isJsonObject) element.asJsonObject else null
+        }.getOrNull()
+    }
+
+    private fun JsonObject.stringOrNull(key: String): String? {
+        val element = get(key) ?: return null
+        if (element.isJsonNull) return null
+        return runCatching { element.asString.trim().takeIf { it.isNotBlank() } }.getOrNull()
+    }
+
+    private fun JsonObject.longOrNull(key: String): Long? {
+        val element = get(key) ?: return null
+        if (element.isJsonNull) return null
+        return runCatching { element.asLong }.getOrNull()
+    }
+
+    private fun jsonPayloadToMap(element: JsonElement?): Map<String, Any?> {
+        if (element == null || element.isJsonNull || !element.isJsonObject) return emptyMap()
+        val type = object : TypeToken<Map<String, Any?>>() {}.type
+        return Gson().fromJson(element, type)
     }
 
     private var consecutiveFailures = 0

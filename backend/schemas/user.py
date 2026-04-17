@@ -69,6 +69,7 @@ class UserUpdateRequest(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str
+    user: Optional[UserResponse] = None
 
 # ============= Fluxo de Recuperação de Senha (SEGURO) =============
 

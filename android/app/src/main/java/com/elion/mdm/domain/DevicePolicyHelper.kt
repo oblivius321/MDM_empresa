@@ -7,6 +7,7 @@ import android.content.Context
 import android.os.UserManager
 import android.util.Log
 import com.elion.mdm.AdminReceiver
+import com.elion.mdm.system.DevMode
 
 /**
  * DevicePolicyHelper — abstração sobre DevicePolicyManager (DPM).
@@ -45,7 +46,20 @@ class DevicePolicyHelper(private val context: Context) {
 
     // ─── Lock ─────────────────────────────────────────────────────────────────
 
+    private fun blockDevEnforcement(action: String): Boolean {
+        if (!DevMode.isDevMode()) return false
+        DevMode.blockDangerousPolicy(action)
+        return true
+    }
+
+    private fun skipDevRecoveryWithoutOwner(action: String): Boolean {
+        if (!DevMode.isDevMode() || isDeviceOwner()) return false
+        DevMode.log("Ignoring recovery policy without Device Owner: $action")
+        return true
+    }
+
     fun lockNow(): Result<Unit> = runCatching {
+        if (blockDevEnforcement("lockNow")) return@runCatching
         check(checkAdmin("lockNow")) { "Não é Device Admin" }
         dpm.lockNow()
         Log.i(TAG, "lockNow() executado")
@@ -54,6 +68,7 @@ class DevicePolicyHelper(private val context: Context) {
     // ─── Wipe ─────────────────────────────────────────────────────────────────
 
     fun wipeDevice(includeExternalStorage: Boolean = false): Result<Unit> = runCatching {
+        if (blockDevEnforcement("wipeData")) return@runCatching
         check(checkDO("wipeDevice")) { "Não é Device Owner" }
         val flags = if (includeExternalStorage) DevicePolicyManager.WIPE_EXTERNAL_STORAGE else 0
         Log.w(TAG, "wipeData(flags=$flags) — FACTORY RESET INICIADO")
@@ -63,6 +78,7 @@ class DevicePolicyHelper(private val context: Context) {
     // ─── Camera ───────────────────────────────────────────────────────────────
 
     fun setCameraDisabled(disabled: Boolean): Result<Unit> = runCatching {
+        if (disabled && blockDevEnforcement("setCameraDisabled(true)")) return@runCatching
         check(checkAdmin("setCameraDisabled")) { "Não é Device Admin" }
         dpm.setCameraDisabled(admin, disabled)
         Log.i(TAG, "setCameraDisabled($disabled)")
@@ -73,6 +89,8 @@ class DevicePolicyHelper(private val context: Context) {
     // ─── Status Bar ───────────────────────────────────────────────────────────
 
     fun setStatusBarDisabled(disabled: Boolean): Result<Unit> = runCatching {
+        if (disabled && blockDevEnforcement("setStatusBarDisabled(true)")) return@runCatching
+        if (!disabled && skipDevRecoveryWithoutOwner("setStatusBarDisabled(false)")) return@runCatching
         check(checkDO("setStatusBarDisabled")) { "Não é Device Owner" }
         dpm.setStatusBarDisabled(admin, disabled)
         Log.i(TAG, "setStatusBarDisabled($disabled)")
@@ -81,12 +99,14 @@ class DevicePolicyHelper(private val context: Context) {
     // ─── Keyguard ─────────────────────────────────────────────────────────────
 
     fun disableKeyguard(): Result<Unit> = runCatching {
+        if (blockDevEnforcement("setKeyguardDisabled(true)")) return@runCatching
         check(checkDO("disableKeyguard")) { "Não é Device Owner" }
         dpm.setKeyguardDisabled(admin, true)
         Log.i(TAG, "Keyguard DESATIVADO")
     }
 
     fun enableKeyguard(): Result<Unit> = runCatching {
+        if (skipDevRecoveryWithoutOwner("setKeyguardDisabled(false)")) return@runCatching
         check(checkDO("enableKeyguard")) { "Não é Device Owner" }
         dpm.setKeyguardDisabled(admin, false)
         Log.i(TAG, "Keyguard REATIVADO")
@@ -95,6 +115,8 @@ class DevicePolicyHelper(private val context: Context) {
     // ─── Kiosk Mode (Lock Task) ───────────────────────────────────────────────
 
     fun setKioskPackages(packages: Array<String>): Result<Unit> = runCatching {
+        if (packages.isNotEmpty() && blockDevEnforcement("setLockTaskPackages")) return@runCatching
+        if (packages.isEmpty() && skipDevRecoveryWithoutOwner("clearLockTaskPackages")) return@runCatching
         check(checkDO("setKioskPackages")) { "Não é Device Owner" }
         dpm.setLockTaskPackages(admin, packages)
         Log.i(TAG, "setLockTaskPackages: ${packages.joinToString()}")
@@ -119,6 +141,7 @@ class DevicePolicyHelper(private val context: Context) {
      *   LOCK_TASK_FEATURE_KEYGUARD        = 32
      */
     fun setLockTaskFeatures(features: Int = DevicePolicyManager.LOCK_TASK_FEATURE_NONE): Result<Unit> = runCatching {
+        if (blockDevEnforcement("setLockTaskFeatures($features)")) return@runCatching
         check(checkDO("setLockTaskFeatures")) { "Não é Device Owner" }
         dpm.setLockTaskFeatures(admin, features)
         Log.i(TAG, "setLockTaskFeatures($features)")
@@ -132,6 +155,7 @@ class DevicePolicyHelper(private val context: Context) {
     // ─── Screen Timeout ───────────────────────────────────────────────────────
 
     fun setScreenOffTimeout(timeoutMs: Long): Result<Unit> = runCatching {
+        if (blockDevEnforcement("setMaximumTimeToLock")) return@runCatching
         check(checkDO("setScreenOffTimeout")) { "Não é Device Owner" }
         dpm.setMaximumTimeToLock(admin, timeoutMs)
         Log.i(TAG, "setMaximumTimeToLock(${timeoutMs}ms)")
@@ -140,12 +164,15 @@ class DevicePolicyHelper(private val context: Context) {
     // ─── Password ─────────────────────────────────────────────────────────────
 
     fun setApplicationHidden(packageName: String, hidden: Boolean): Result<Unit> = runCatching {
+        if (hidden && blockDevEnforcement("setApplicationHidden($packageName, true)")) return@runCatching
+        if (!hidden && skipDevRecoveryWithoutOwner("setApplicationHidden($packageName, false)")) return@runCatching
         check(checkDO("setApplicationHidden")) { "Nao e Device Owner" }
         dpm.setApplicationHidden(admin, packageName, hidden)
         Log.i(TAG, "setApplicationHidden($packageName, hidden=$hidden)")
     }
 
     fun setMinPasswordLength(length: Int): Result<Unit> = runCatching {
+        if (blockDevEnforcement("setPasswordMinimumLength")) return@runCatching
         check(checkAdmin("setMinPasswordLength")) { "Não é Device Admin" }
         dpm.setPasswordMinimumLength(admin, length)
         Log.i(TAG, "setPasswordMinimumLength($length)")
@@ -173,6 +200,8 @@ class DevicePolicyHelper(private val context: Context) {
     }
 
     private fun setUserRestriction(restriction: String, disabled: Boolean): Result<Unit> = runCatching {
+        if (disabled && blockDevEnforcement("addUserRestriction($restriction)")) return@runCatching
+        if (!disabled && skipDevRecoveryWithoutOwner("clearUserRestriction($restriction)")) return@runCatching
         check(checkDO("setUserRestriction:$restriction")) { "Nao e Device Owner" }
         if (disabled) dpm.addUserRestriction(admin, restriction)
         else dpm.clearUserRestriction(admin, restriction)
@@ -180,6 +209,8 @@ class DevicePolicyHelper(private val context: Context) {
     }
 
     fun setFactoryResetDisabled(disabled: Boolean): Result<Unit> = runCatching {
+        if (disabled && blockDevEnforcement("DISALLOW_FACTORY_RESET")) return@runCatching
+        if (!disabled && skipDevRecoveryWithoutOwner("clear DISALLOW_FACTORY_RESET")) return@runCatching
         check(checkDO("setFactoryResetDisabled")) { "Não é Device Owner" }
         if (disabled) dpm.addUserRestriction(admin, UserManager.DISALLOW_FACTORY_RESET)
         else          dpm.clearUserRestriction(admin, UserManager.DISALLOW_FACTORY_RESET)
@@ -187,6 +218,8 @@ class DevicePolicyHelper(private val context: Context) {
     }
 
     fun setSafeModeDisabled(disabled: Boolean): Result<Unit> = runCatching {
+        if (disabled && blockDevEnforcement("DISALLOW_SAFE_BOOT")) return@runCatching
+        if (!disabled && skipDevRecoveryWithoutOwner("clear DISALLOW_SAFE_BOOT")) return@runCatching
         check(checkDO("setSafeModeDisabled")) { "Não é Device Owner" }
         if (disabled) dpm.addUserRestriction(admin, UserManager.DISALLOW_SAFE_BOOT)
         else          dpm.clearUserRestriction(admin, UserManager.DISALLOW_SAFE_BOOT)
@@ -198,6 +231,7 @@ class DevicePolicyHelper(private val context: Context) {
      * Útil durante a fase de desenvolvimento para garantir que botões de Hard Reset funcionem.
      */
     fun clearSafetyRestrictions(): Result<Unit> = runCatching {
+        if (skipDevRecoveryWithoutOwner("clearSafetyRestrictions")) return@runCatching
         check(checkDO("clearSafetyRestrictions")) { "Não é Device Owner" }
         dpm.clearUserRestriction(admin, UserManager.DISALLOW_FACTORY_RESET)
         dpm.clearUserRestriction(admin, UserManager.DISALLOW_SAFE_BOOT)
@@ -210,6 +244,7 @@ class DevicePolicyHelper(private val context: Context) {
      * factory reset, safe mode, montar mídia física.
      */
     fun enableFullLockdown(): Result<Unit> = runCatching {
+        if (blockDevEnforcement("enableFullLockdown")) return@runCatching
         check(checkDO("enableFullLockdown")) { "Não é Device Owner" }
 
         val restrictions = arrayOf(
@@ -235,6 +270,7 @@ class DevicePolicyHelper(private val context: Context) {
      * Remove TODAS as restrições de lockdown.
      */
     fun disableFullLockdown(): Result<Unit> = runCatching {
+        if (skipDevRecoveryWithoutOwner("disableFullLockdown")) return@runCatching
         check(checkDO("disableFullLockdown")) { "Não é Device Owner" }
 
         val restrictions = arrayOf(
@@ -259,6 +295,7 @@ class DevicePolicyHelper(private val context: Context) {
     // ─── Reboot ───────────────────────────────────────────────────────────────
 
     fun reboot(): Result<Unit> = runCatching {
+        if (blockDevEnforcement("reboot")) return@runCatching
         check(checkDO("reboot")) { "Não é Device Owner" }
         dpm.reboot(admin)
         Log.i(TAG, "reboot() solicitado")

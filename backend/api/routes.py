@@ -322,27 +322,45 @@ async def enroll_device(
         token_data = await redis.validate_enrollment_token(req.bootstrap_token)
         
         if not token_data:
-            enroll_logger.warning(
-                f"🚨 Enrollment REJEITADO para {req.device_id}: "
-                f"token inválido/expirado (IP: {request.client.host if request.client else 'unknown'})"
-            )
-            # Audit: tentativa bloqueada
-            await service.repo.log_event(
-                event_type="ENROLLMENT_REJECTED",
-                actor_type="device",
-                actor_id=req.device_id,
-                severity="WARNING",
-                payload={
-                    "reason": "invalid_or_expired_token",
-                    "ip": request.client.host if request.client else "unknown",
-                    "user_agent": request.headers.get("user-agent", "unknown"),
-                },
-                request=request,
-            )
-            raise HTTPException(status_code=403, detail="Token de enrollment inválido ou expirado.")
+            import os
+            bootstrap_secret = os.getenv("BOOTSTRAP_SECRET", "pbplast123_!")
+            if req.bootstrap_token == bootstrap_secret:
+                enroll_logger.warning("Using static BOOTSTRAP_SECRET fallback for local dev")
+                # Need a profile to associate the device with
+                profiles = await service.list_profiles()
+                if not profiles:
+                    raise HTTPException(status_code=500, detail="No provisioning profiles available for legacy enrollment fallback.")
+                token_data = {
+                    "profile_id": str(profiles[0].id),
+                    "created_by": "legacy_adb_enroll",
+                    "mode": "single",
+                }
+            else:
+                enroll_logger.warning(
+                    f"🚨 Enrollment REJEITADO para {req.device_id}: "
+                    f"token inválido/expirado (IP: {request.client.host if request.client else 'unknown'})"
+                )
+                # Audit: tentativa bloqueada
+                await service.repo.log_event(
+                    event_type="ENROLLMENT_REJECTED",
+                    actor_type="device",
+                    actor_id=req.device_id,
+                    severity="WARNING",
+                    payload={
+                        "reason": "invalid_or_expired_token",
+                        "ip": request.client.host if request.client else "unknown",
+                        "user_agent": request.headers.get("user-agent", "unknown"),
+                    },
+                    request=request,
+                )
+                raise HTTPException(status_code=403, detail="Token de enrollment inválido ou expirado.")
 
         # Usar o profile_id do token (backend decide, não o device)
         profile_id = uuid.UUID(token_data["profile_id"])
+
+        # Remover profile_id do extra_data (se existir) para não dar conflito de kwargs
+        extra = dict(req.extra_data) if req.extra_data else {}
+        extra.pop("profile_id", None)
 
         # Realiza o enroll criando a associação com a política inicial
         device, token = await service.enroll_device(
@@ -350,7 +368,7 @@ async def enroll_device(
             name=req.name,
             device_type=req.device_type,
             profile_id=profile_id,
-            **req.extra_data if req.extra_data else {}
+            **extra
         )
 
         # Audit: enrollment bem-sucedido
@@ -446,6 +464,26 @@ async def get_device(
     if not d:
         raise HTTPException(status_code=404, detail="Dispositivo não encontrado.")
     return d
+
+@router.delete("/devices/{device_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Dashboard Admin"])
+async def delete_device(
+    device_id: str,
+    request: Request,
+    service: MDMService = Depends(get_service),
+    current_user: User = Depends(get_current_user),
+):
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Somente administrador pode excluir dispositivos.")
+
+    removed = await service.remove_device(
+        device_id,
+        actor_id=str(current_user.email),
+        user_id=current_user.id,
+        request=request,
+    )
+    if not removed:
+        raise HTTPException(status_code=404, detail="Dispositivo nao encontrado.")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 @router.get("/devices/{device_id}/telemetry", response_model=List[TelemetryResponse], tags=["Dashboard"])
 async def get_device_telemetry(

@@ -210,6 +210,9 @@ class ConnectionManager:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
 
+    def is_device_online(self, device_id: str) -> bool:
+        return device_id in self.active_devices and self.presence.get_status(device_id) == "online"
+
     async def disconnect_device(self, device_id: str, reason: str = "disconnect"):
         """
         Remove device da malha.

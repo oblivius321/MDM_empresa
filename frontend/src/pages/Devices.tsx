@@ -23,12 +23,23 @@ import {
   Plus,
   QrCode,
   RefreshCw,
+  Trash2,
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
-import { androidManagementService, ComplianceStatus } from '@/services/api';
+import { androidManagementService, ComplianceStatus, deviceService, Device } from '@/services/api';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 const STATUS_OPTIONS = [
   { value: '', label: 'Todos' },
@@ -72,6 +83,8 @@ export default function Devices() {
   const [searchInput, setSearchInput] = useState('');
   const [enrollmentOpen, setEnrollmentOpen] = useState(false);
   const [syncLoading, setSyncLoading] = useState(false);
+  const [deviceToDelete, setDeviceToDelete] = useState<Device | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
   const {
     devices,
     loading,
@@ -122,6 +135,28 @@ export default function Devices() {
       });
     } finally {
       setSyncLoading(false);
+    }
+  };
+
+  const handleDeleteDevice = async () => {
+    if (!deviceToDelete) return;
+    setDeleteLoading(true);
+    try {
+      await deviceService.delete(deviceToDelete.id);
+      toast({
+        title: 'Dispositivo excluido',
+        description: `${deviceToDelete.name} foi removido do sistema${deviceToDelete.external_id ? ' e da Android Management API.' : '.'}`,
+      });
+      setDeviceToDelete(null);
+      await refresh();
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao excluir',
+        description: err.response?.data?.detail || err.message || 'Falha ao excluir dispositivo.',
+        variant: 'destructive',
+      });
+    } finally {
+      setDeleteLoading(false);
     }
   };
 
@@ -268,13 +303,23 @@ export default function Devices() {
                       </span>
                     </td>
                     <td className="px-5 py-3">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); navigate(`/devices/${device.id}`); }}
-                        className="flex items-center gap-1.5 text-xs font-bold text-primary hover:text-primary/80 transition-colors"
-                      >
-                        <Eye className="w-3.5 h-3.5" />
-                        Detalhes
-                      </button>
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); navigate(`/devices/${device.id}`); }}
+                          className="flex items-center gap-1.5 text-xs font-bold text-primary hover:text-primary/80 transition-colors"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          Detalhes
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setDeviceToDelete(device); }}
+                          disabled={deleteLoading}
+                          className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground hover:text-status-locked transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          Excluir
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -327,6 +372,48 @@ export default function Devices() {
 
       {/* Enrollment Modal */}
       <EnrollmentModal isOpen={enrollmentOpen} onClose={() => setEnrollmentOpen(false)} />
+
+      <AlertDialog open={!!deviceToDelete} onOpenChange={(open) => !open && !deleteLoading && setDeviceToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir dispositivo?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta acao e irreversivel. {deviceToDelete?.external_id
+                ? 'O dispositivo tambem sera removido da Android Management API vinculada.'
+                : 'O dispositivo sera removido do banco de dados local.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {deviceToDelete && (
+            <div className="rounded-md border border-border bg-secondary/40 px-3 py-2 text-sm">
+              <div className="font-bold text-foreground">{deviceToDelete.name}</div>
+              <div className="font-mono text-xs text-muted-foreground">{deviceToDelete.id}</div>
+            </div>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteLoading}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleteLoading}
+              onClick={(event) => {
+                event.preventDefault();
+                handleDeleteDevice();
+              }}
+              className="bg-status-locked text-white hover:bg-status-locked/90"
+            >
+              {deleteLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Excluindo
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-4 h-4" />
+                  Excluir definitivamente
+                </>
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

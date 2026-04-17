@@ -25,7 +25,8 @@ class SecurePreferences(context: Context) {
         private const val KEY_BACKEND_URL      = "backend_url"
         private const val KEY_CHECKIN_INTERVAL = "checkin_interval_seconds"
         private const val KEY_LAST_SYNC        = "last_sync_timestamp"
-        private const val DEFAULT_BACKEND_URL  = "http://192.168.25.227"
+        private const val KEY_MDM_STATE        = "mdm_state_enum"
+        private const val DEFAULT_BACKEND_URL  = "" // Em branco por segurança/flexibilidade
 
         // ─── Kiosk Keys ─────────────────────────────────────────────
         private const val KEY_KIOSK_ENABLED       = "kiosk_enabled"
@@ -112,6 +113,19 @@ class SecurePreferences(context: Context) {
     var lastReportedErrorCode: String?
         get() = prefs.getString("last_rep_err_code", null)
         set(v) = prefs.edit().putString("last_rep_err_code", v).apply()
+
+    // ─── MDM Lifecycle State ──────────────────────────────────────────────────
+    
+    var mdmState: com.elion.mdm.domain.MdmState
+        get() {
+            val name = prefs.getString(KEY_MDM_STATE, com.elion.mdm.domain.MdmState.UNCONFIGURED.name)
+            return try {
+                com.elion.mdm.domain.MdmState.valueOf(name ?: com.elion.mdm.domain.MdmState.UNCONFIGURED.name)
+            } catch (e: Exception) {
+                com.elion.mdm.domain.MdmState.UNCONFIGURED
+            }
+        }
+        set(v) = prefs.edit().putString(KEY_MDM_STATE, v.name).apply()
 
     // ─── Enrollment State Machine ──────────────────────────────────────────
     var enrollmentStatePayload: String?

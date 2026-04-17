@@ -67,17 +67,6 @@ export function buildWebSocketUrl(path: string) {
   // Fallback: Se a API_BASE_URL for relativa (ex: /api), supomos que o WS está no mesmo host
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   
-  // CRÍTICO: Se estamos na porta 3000 (Vite), mas o proxy Nginx está na 80, 
-  // o WebSocket NÃO deve ir para a 3000. Forçamos para a porta padrão (80/443) 
-  // ou a porta que o Nginx está escutando se for diferente.
-  const host = window.location.hostname;
-  
-  // Em desenvolvimento Docker, o Nginx está na 80. O Vite na 3000.
-  // Se o usuário acessa via :3000, redirecionamos o WS para a porta 80 do Nginx.
-  if (window.location.port === '3000') {
-      return `${wsProtocol}//${host}${joinPath(API_BASE_URL, path)}`;
-  }
-
   return `${wsProtocol}//${window.location.host}${joinPath(API_BASE_URL, path)}`;
 }
 
@@ -326,6 +315,9 @@ export const deviceService = {
 
   wipe: (id: string) =>
     api.post(`/devices/${id}/wipe`),
+
+  delete: (id: string) =>
+    api.delete(`/devices/${id}`),
 };
 
 // ─── Policy V2 Endpoints (Enterprise) ────────────────────────────────────────

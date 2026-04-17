@@ -3,7 +3,7 @@ import hashlib
 import json
 import logging
 from datetime import datetime
-from sqlalchemy import func
+from sqlalchemy import func, inspect, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -91,14 +91,42 @@ class DeviceRepository:
         await self.db.refresh(device)
         return device
 
+    async def _table_has_column(self, table_name: str, column_name: str) -> bool:
+        def check(sync_session):
+            inspector = inspect(sync_session.connection())
+            if not inspector.has_table(table_name):
+                return False
+            return any(column["name"] == column_name for column in inspector.get_columns(table_name))
+
+        return await self.db.run_sync(check)
+
     async def remove(self, device_id: str) -> bool:
-        """Remove dispositivo e todos os dados vinculados (Cascade)."""
-        device = await self.get(device_id)
-        if device:
-            await self.db.delete(device)
-            await self.db.commit()
-            return True
-        return False
+        """Remove dispositivo e dados vinculados conhecidos."""
+        existing = await self.db.execute(
+            select(Device.device_id).where(Device.device_id == device_id)
+        )
+        if not existing.scalar_one_or_none():
+            return False
+
+        for table_name in (
+            "policy_states",
+            "device_policies",
+            "command_queue",
+            "device_telemetry",
+            "policies",
+        ):
+            if not await self._table_has_column(table_name, "device_id"):
+                continue
+            await self.db.execute(
+                text(f"DELETE FROM {table_name} WHERE device_id = :device_id"),
+                {"device_id": device_id},
+            )
+        await self.db.execute(
+            text("DELETE FROM devices WHERE device_id = :device_id"),
+            {"device_id": device_id},
+        )
+        await self.db.commit()
+        return True
 
     # ─── Profile Operations (SaaS Templates) ──────────────────────────────────
 
@@ -226,6 +254,15 @@ class DeviceRepository:
             .limit(limit)
         )
         return list(result.scalars().all())
+
+    async def get_command(self, command_id: int, device_id: str = None) -> Optional[DeviceCommand]:
+        query = select(DeviceCommand).where(DeviceCommand.id == command_id)
+        if device_id is not None:
+            query = query.where(DeviceCommand.device_id == device_id)
+
+        result = await self.db.execute(query)
+        return result.scalars().first()
+
     async def transition_status(self, command: DeviceCommand, new_status: str, metadata: dict = None):
         """
         Realiza a transição de status de forma segura e auditável.
@@ -256,7 +293,8 @@ class DeviceRepository:
             command.executed_at = now
         elif new_status == CommandStatus.ACKED:
             command.acked_at = now
-        elif new_status == CommandStatus.FAILED or new_status == CommandStatus.ACKED:
+            command.completed_at = now
+        elif new_status == CommandStatus.FAILED:
             command.completed_at = now
 
         # Persistência atômica do estado antes da auditoria

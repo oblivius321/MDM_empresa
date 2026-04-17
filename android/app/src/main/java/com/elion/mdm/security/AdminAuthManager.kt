@@ -88,7 +88,16 @@ class AdminAuthManager(context: Context) {
             return AuthResult.Success
         }
 
-        // 4. Falha — incrementar tentativas
+        // 4. Bypass DEV (Se build IS_DEV e não há senha configurada)
+        if (com.elion.mdm.system.DevMode.isDevMode() && prefs.adminPasswordHash == null) {
+            if (password == "admin123") {
+                Log.i(TAG, "DEV Bypass: Autenticado com senha padrão")
+                onAuthSuccess(email, "admin123")
+                return AuthResult.Success
+            }
+        }
+
+        // 5. Falha — incrementar tentativas
         return onAuthFailure()
     }
 

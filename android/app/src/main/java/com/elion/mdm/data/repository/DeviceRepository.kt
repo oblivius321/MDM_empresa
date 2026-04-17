@@ -29,24 +29,29 @@ class DeviceRepository(private val context: Context) {
     // ─── Enrollment ───────────────────────────────────────────────────────────
 
     /**
-     * Registra o dispositivo no backend com o bootstrap_secret.
+     * Registra o dispositivo no backend com o bootstrap_token.
      * Em caso de sucesso, persiste device_id e device_token localmente.
      *
-     * @param bootstrapSecret chave de bootstrap configurada no servidor
+     * @param bootstrapToken token de bootstrap gerado pelo backend
      * @param backendUrl URL do servidor MDM (salva para uso futuro)
      * @return Result com EnrollmentResponse em caso de sucesso
      */
-    suspend fun enroll(bootstrapSecret: String, backendUrl: String): Result<EnrollmentResponse> =
+    suspend fun enroll(
+        bootstrapToken: String,
+        backendUrl: String,
+        profileId: String? = null
+    ): Result<EnrollmentResponse> =
         runCatching {
             // Persiste a URL antes de criar o cliente (ApiClient lê das prefs)
             prefs.backendUrl = ApiClient.normalizeRootUrl(backendUrl)
             ApiClient.invalidate()
 
             val deviceId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: "UNKNOWN_${System.currentTimeMillis()}"
-            val profileId = try {
+            val resolvedProfileId = profileId?.takeIf { it.isNotBlank() } ?: try {
                 prefs.enrollmentStatePayload?.let { json ->
                     val map = com.google.gson.Gson().fromJson(json, Map::class.java) as Map<String, Any>
-                    (map["metadata"] as? Map<String, String>)?.get("profile_id")
+                    val metadata = map["metadata"] as? Map<*, *>
+                    metadata?.get("profile_id")?.toString()
                 }
             } catch (e: Exception) { null }
 
@@ -55,14 +60,15 @@ class DeviceRepository(private val context: Context) {
                 deviceId        = deviceId,
                 name            = "${Build.MANUFACTURER} ${Build.MODEL}",
                 deviceType      = "android",
-                bootstrapSecret = bootstrapSecret,
+                bootstrapToken  = bootstrapToken,
                 extraData       = mapOf(
-                    "profile_id" to (profileId ?: ""),
+                    "profile_id" to (resolvedProfileId ?: ""),
                     "android_version" to Build.VERSION.RELEASE,
                     "legacy_serial"   to (Build.SERIAL.takeIf { it != Build.UNKNOWN } ?: "UNKNOWN")
                 )
             )
 
+            Log.i(TAG, "Enrollment request prepared — bootstrap_token_prefix=${bootstrapToken.take(8)}...")
             val response = api.enroll(request)
 
             if (!response.isSuccessful) {

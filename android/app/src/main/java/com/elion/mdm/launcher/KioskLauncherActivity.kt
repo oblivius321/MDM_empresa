@@ -3,11 +3,13 @@ package com.elion.mdm.launcher
 import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.os.Bundle
 import android.util.Log
 import android.view.View
 import android.widget.ImageView
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -17,6 +19,7 @@ import com.elion.mdm.admin.AdminLoginActivity
 import com.elion.mdm.data.local.SecurePreferences
 import com.elion.mdm.domain.DevicePolicyHelper
 import com.elion.mdm.security.KioskSecurityManager
+import com.elion.mdm.system.DevMode
 import org.json.JSONArray
 
 /**
@@ -56,6 +59,10 @@ class KioskLauncherActivity : AppCompatActivity() {
     private lateinit var rvApps: RecyclerView
     private lateinit var tvEmpty: TextView
     private lateinit var btnMenu: ImageView
+    private lateinit var tvKioskBadge: TextView
+    private lateinit var tvDevBanner: TextView
+    private var devExitTapCount = 0
+    private var lastDevExitTapMs = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -66,6 +73,7 @@ class KioskLauncherActivity : AppCompatActivity() {
         securityManager = KioskSecurityManager(this)
 
         bindViews()
+        setupDevModeUi()
         setupMenu()
         loadApps()
         enterKioskIfNeeded()
@@ -76,6 +84,11 @@ class KioskLauncherActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (prefs.isKioskEnabled) {
+                    if (DevMode.isDevMode()) {
+                        Log.w(TAG, "Back liberado no soft kiosk DEV")
+                        exitKiosk()
+                        return
+                    }
                     Log.d(TAG, "Back bloqueado em modo kiosk")
                 } else {
                     isEnabled = false
@@ -87,6 +100,10 @@ class KioskLauncherActivity : AppCompatActivity() {
     }
 
     private fun enforceFullscreen() {
+        if (DevMode.isDevMode()) {
+            window.decorView.systemUiVisibility = 0
+            return
+        }
         if (prefs.isKioskEnabled || dpm.isInLockTaskMode()) {
             window.decorView.systemUiVisibility = (
                 View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
@@ -98,16 +115,26 @@ class KioskLauncherActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        
+        // --- Validação de Estado ---
+        if (prefs.mdmState != com.elion.mdm.domain.MdmState.KIOSK_ACTIVE) {
+            Log.w(TAG, "KioskLauncher aberta em estado inválido (${prefs.mdmState}) — Encerrando.")
+            finish()
+            return
+        }
+
         loadApps()  // Refresh on resume
         enterKioskIfNeeded()
         enforceFullscreen() // Garante que popups ou sub-telas do S.O não quebrem a flag
-        securityManager.startWatchdog()
+        if (!DevMode.isDevMode()) {
+            securityManager.startWatchdog()
+        }
     }
 
     override fun onPause() {
         super.onPause()
         // Se estamos em kiosk e a activity perdeu foco, reclaim
-        if (prefs.isKioskEnabled && !isFinishing) {
+        if (!DevMode.isDevMode() && prefs.isKioskEnabled && !isFinishing) {
             reclaimForeground()
         }
     }
@@ -124,6 +151,45 @@ class KioskLauncherActivity : AppCompatActivity() {
         rvApps = findViewById(R.id.rv_apps)
         tvEmpty = findViewById(R.id.tv_empty)
         btnMenu = findViewById(R.id.btn_menu)
+        tvKioskBadge = findViewById(R.id.tv_kiosk_badge)
+        tvDevBanner = findViewById(R.id.tv_dev_banner)
+    }
+
+    private fun setupDevModeUi() {
+        if (!DevMode.isDevMode()) return
+
+        tvKioskBadge.text = "DEV MODE"
+        tvKioskBadge.setTextColor(Color.WHITE)
+        tvKioskBadge.setBackgroundColor(0xFFD32F2F.toInt())
+        tvDevBanner.visibility = View.VISIBLE
+        tvDevBanner.text = "DEV MODE - soft kiosk, exit enabled"
+        tvKioskBadge.setOnClickListener { handleDevExitTap() }
+        tvKioskBadge.setOnLongClickListener {
+            exitKiosk()
+            true
+        }
+        btnMenu.setOnLongClickListener {
+            exitKiosk()
+            true
+        }
+        DevMode.showLaunchToast(this)
+    }
+
+    private fun handleDevExitTap() {
+        if (!DevMode.isDevMode()) return
+
+        val now = System.currentTimeMillis()
+        if (now - lastDevExitTapMs > 2_000L) {
+            devExitTapCount = 0
+        }
+        lastDevExitTapMs = now
+        devExitTapCount++
+
+        if (devExitTapCount >= 5) {
+            exitKiosk()
+        } else {
+            Toast.makeText(this, "DEV exit: $devExitTapCount/5", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun setupMenu() {
@@ -176,7 +242,12 @@ class KioskLauncherActivity : AppCompatActivity() {
     // ─── Kiosk Lock Task ──────────────────────────────────────────────────────
 
     private fun enterKioskIfNeeded() {
-        if (!prefs.isKioskEnabled) return
+        if (prefs.mdmState != com.elion.mdm.domain.MdmState.KIOSK_ACTIVE) return
+        
+        if (DevMode.isDevMode()) {
+            Log.w(TAG, "Soft kiosk DEV ativo; LockTask e bloqueios de sistema nao serao aplicados")
+            return
+        }
         if (!dpm.isDeviceOwner()) {
             Log.w(TAG, "Não é Device Owner — Lock Task não disponível")
             return
@@ -208,6 +279,15 @@ class KioskLauncherActivity : AppCompatActivity() {
     }
 
     fun exitKiosk() {
+        prefs.isKioskEnabled = false
+        prefs.mdmState = com.elion.mdm.domain.MdmState.ENROLLED
+
+        if (DevMode.isDevMode()) {
+            securityManager.stopWatchdog()
+            DevMode.emergencyExit(this)
+            finish()
+            return
+        }
         try {
             stopLockTask()
             Log.i(TAG, "Lock Task Mode DESATIVADO")

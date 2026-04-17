@@ -5,6 +5,7 @@ from backend.repositories.device_repo import DeviceRepository
 from backend.models.device import Device
 from backend.models.policy import ProvisioningProfile, DevicePolicy, DeviceCommand
 from backend.services.redis_service import RedisService
+from backend.core import CommandStatus
 
 logger = logging.getLogger("mdm.service")
 
@@ -226,7 +227,7 @@ class MDMService:
         if not policy:
             raise HTTPException(status_code=404, detail="Configuração de política não encontrada.")
             
-        commands = await self.repo.get_pending_commands(device_id)
+        commands = await self.get_pending_commands(device_id)
         
         return {
             "device_id": device_id,
@@ -418,13 +419,23 @@ class MDMService:
 
     async def get_pending_commands(self, device_id: str) -> List[DeviceCommand]:
         """Recupera comandos PENDING e os marca como DISPATCHED."""
-        return await self.repo.get_pending_commands(device_id)
+        commands = await self.repo.get_pending_commands(device_id)
+        for cmd in commands:
+            if cmd.status == CommandStatus.PENDING:
+                await self.repo.transition_status(
+                    cmd,
+                    CommandStatus.DISPATCHED,
+                    metadata={"transport": "http_poll"},
+                )
+        if commands:
+            await self.repo.db.commit()
+        return commands
 
     async def get_command_history(self, device_id: str) -> List[DeviceCommand]:
         """Recupera o histórico completo de comandos."""
         return await self.repo.get_command_history(device_id)
 
-    async def ack_command(self, device_id: str, command_id: int, status: str, metadata: dict = None) -> bool:
+    async def _legacy_ack_command_unused(self, device_id: str, command_id: int, status: str, metadata: dict = None) -> bool:
         """
         Processa confirmação de recepção (ACK) ou execução (EXECUTED) do device.
         """
@@ -487,6 +498,84 @@ class MDMService:
                 payload={"command_id": str(command_id), "reason": str(e), "alert_human": True}
             )
             # Reverte status ou adiciona na retry queue dependendo na política de resiliência
+
+    async def ack_command(self, device_id: str, command_id: int, status: str, metadata: dict = None) -> bool:
+        """Atualiza resultado do comando enviado pelo agente local."""
+        normalized_status = self._normalize_command_status(status)
+        if normalized_status not in {CommandStatus.EXECUTED, CommandStatus.FAILED, CommandStatus.ACKED}:
+            return False
+
+        cmd = await self.repo.get_command(command_id, device_id)
+        if not cmd:
+            return False
+
+        if cmd.status in CommandStatus.TERMINAL_STATES:
+            if cmd.status == CommandStatus.ACKED and normalized_status in {CommandStatus.EXECUTED, CommandStatus.ACKED}:
+                return True
+            if cmd.status == CommandStatus.FAILED and normalized_status == CommandStatus.FAILED:
+                return True
+            return False
+
+        try:
+            if normalized_status == CommandStatus.FAILED:
+                if metadata and metadata.get("error"):
+                    cmd.error_message = str(metadata["error"])
+                await self.repo.transition_status(cmd, CommandStatus.FAILED, metadata)
+            elif normalized_status == CommandStatus.EXECUTED:
+                if cmd.status == CommandStatus.PENDING:
+                    await self.repo.transition_status(
+                        cmd,
+                        CommandStatus.DISPATCHED,
+                        metadata={"auto_dispatched": True, **(metadata or {})},
+                    )
+                if cmd.status == CommandStatus.DISPATCHED:
+                    await self.repo.transition_status(cmd, CommandStatus.EXECUTED, metadata)
+                if cmd.status == CommandStatus.EXECUTED:
+                    await self.repo.transition_status(cmd, CommandStatus.ACKED, metadata)
+            elif normalized_status == CommandStatus.ACKED:
+                if cmd.status == CommandStatus.PENDING:
+                    await self.repo.transition_status(
+                        cmd,
+                        CommandStatus.DISPATCHED,
+                        metadata={"transport_ack": True, **(metadata or {})},
+                    )
+                elif cmd.status == CommandStatus.EXECUTED:
+                    await self.repo.transition_status(cmd, CommandStatus.ACKED, metadata)
+
+            await self.repo.db.commit()
+        except Exception as exc:
+            logger.error(f"Erro ao processar ACK do comando {command_id}: {exc}")
+            await self.repo.db.rollback()
+            return False
+
+        event_map = {
+            CommandStatus.ACKED: "COMMAND_ACKED",
+            CommandStatus.EXECUTED: "COMMAND_EXECUTED",
+            CommandStatus.FAILED: "COMMAND_FAILED",
+        }
+        await self.repo.log_event(
+            event_type=event_map.get(cmd.status, "COMMAND_UPDATED"),
+            actor_type="device",
+            actor_id=device_id,
+            severity="INFO" if cmd.status != CommandStatus.FAILED else "ERROR",
+            payload={"command_id": str(command_id), "status": cmd.status, "metadata": metadata},
+        )
+
+        return True
+
+    def _normalize_command_status(self, status: str) -> str:
+        normalized = str(status or "").strip().upper()
+        aliases = {
+            "SUCCESS": CommandStatus.EXECUTED,
+            "SUCCEEDED": CommandStatus.EXECUTED,
+            "COMPLETED": CommandStatus.EXECUTED,
+            "DONE": CommandStatus.EXECUTED,
+            "ACKNOWLEDGED": CommandStatus.ACKED,
+            "FAIL": CommandStatus.FAILED,
+            "FAILURE": CommandStatus.FAILED,
+            "ERROR": CommandStatus.FAILED,
+        }
+        return aliases.get(normalized, normalized)
 
     async def process_status_report(self, device_id: str, report: Dict):
         """
@@ -568,8 +657,70 @@ class MDMService:
     async def get_device(self, device_id: str) -> Optional[Device]:
         return await self.repo.get(device_id)
 
-    async def remove_device(self, device_id: str) -> bool:
-        return await self.repo.remove(device_id)
+    async def _delete_amapi_device(self, device: Device) -> str:
+        from fastapi import HTTPException
+        from sqlalchemy.future import select
+        from backend.models.android_management import AndroidManagementConfig
+        from backend.services.android_management_service import AndroidManagementService
+
+        external_id = str(getattr(device, "external_id", "") or "").strip().strip("/")
+        if not external_id:
+            return ""
+
+        if external_id.startswith("enterprises/"):
+            device_name = external_id
+        else:
+            result = await self.repo.db.execute(
+                select(AndroidManagementConfig).where(AndroidManagementConfig.id == 1)
+            )
+            config = result.scalar_one_or_none()
+            enterprise_name = str(getattr(config, "enterprise_name", "") or "").strip().strip("/")
+            if not enterprise_name:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Enterprise Android Management nao conectada para excluir dispositivo AMAPI.",
+                )
+            if not enterprise_name.startswith("enterprises/"):
+                enterprise_name = f"enterprises/{enterprise_name}"
+            device_name = f"{enterprise_name}/devices/{external_id}"
+
+        await AndroidManagementService().delete_device(device_name)
+        return device_name
+
+    async def remove_device(
+        self,
+        device_id: str,
+        actor_id: str = "system",
+        user_id: int = None,
+        request = None,
+    ) -> bool:
+        device = await self.repo.get(device_id)
+        if not device:
+            return False
+
+        amapi_device_name = ""
+        if getattr(device, "external_id", None):
+            amapi_device_name = await self._delete_amapi_device(device)
+
+        device_snapshot = {
+            "device_id": device.device_id,
+            "name": device.name,
+            "external_id": getattr(device, "external_id", None),
+            "amapi_device_name": amapi_device_name or None,
+        }
+        removed = await self.repo.remove(device_id)
+        if removed:
+            await self.repo.log_event(
+                event_type="DEVICE_DELETED",
+                actor_type="admin" if actor_id != "system" else "system",
+                actor_id=actor_id,
+                user_id=user_id,
+                severity="WARNING",
+                device_id=device_id,
+                payload=device_snapshot,
+                request=request,
+            )
+        return removed
         
     async def list_profiles(self) -> List[ProvisioningProfile]:
         return await self.repo.list_profiles()

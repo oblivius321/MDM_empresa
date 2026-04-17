@@ -18,7 +18,33 @@ class KioskManager(private val context: Context) {
     private val prefs = SecurePreferences(context)
 
     fun enableKiosk(allowedPackages: List<String> = emptyList()) {
-        Log.i(TAG, "Ativando modo kiosk...")
+        Log.i(TAG, "Ativando modo kiosk (${DevMode.modeHeader()})...")
+
+        // 1. Check Enrollment
+        if (prefs.mdmState == com.elion.mdm.domain.MdmState.UNCONFIGURED) {
+            Log.e(TAG, "Kiosk bloqueado: Dispositivo nao configurado")
+            return
+        }
+
+        // 2. Anti-Brick Protection
+        if (allowedPackages.isEmpty() && !DevMode.isDevMode()) {
+            Log.e(TAG, "Anti-Brick: Ativacao cancelada (nenhum app permitido)")
+            return
+        }
+
+        if (DevMode.isDevMode()) {
+            prefs.isKioskEnabled = true
+            prefs.mdmState = com.elion.mdm.domain.MdmState.KIOSK_ACTIVE
+
+            val array = JSONArray()
+            allowedPackages.distinct().forEach { array.put(it) }
+            prefs.allowedAppsJson = array.toString()
+
+            DevMode.log("Soft kiosk enabled; LockTask and system restrictions are disabled")
+            KioskLauncherActivity.launch(context)
+            DevMode.showLaunchToast(context)
+            return
+        }
 
         if (!dpm.isDeviceOwner()) {
             Log.e(TAG, "App nao e Device Owner; kiosk nao pode ser ativado")
@@ -26,6 +52,7 @@ class KioskManager(private val context: Context) {
         }
 
         prefs.isKioskEnabled = true
+        prefs.mdmState = com.elion.mdm.domain.MdmState.KIOSK_ACTIVE
 
         val array = JSONArray()
         allowedPackages.distinct().forEach { array.put(it) }
@@ -54,6 +81,13 @@ class KioskManager(private val context: Context) {
     fun disableKiosk() {
         Log.i(TAG, "Desativando modo kiosk...")
         prefs.isKioskEnabled = false
+        prefs.mdmState = com.elion.mdm.domain.MdmState.ENROLLED
+
+        if (DevMode.isDevMode()) {
+            DevMode.emergencyExit(context)
+            Log.i(TAG, "Modo kiosk DEV desativado")
+            return
+        }
 
         if (dpm.isDeviceOwner()) {
             dpm.setKioskPackages(emptyArray())

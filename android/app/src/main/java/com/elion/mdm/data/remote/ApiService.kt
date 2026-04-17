@@ -49,12 +49,6 @@ interface ApiService {
     // Endpoint: POST /api/devices/{id}/commands/{cmd_id}/ack
 
     @POST("api/devices/{device_id}/commands/{command_id}/ack")
-    suspend fun acknowledgeCommand(
-        @Path("device_id") deviceId: String,
-        @Path("command_id") commandId: Long
-    ): Response<Unit>
-
-    @POST("api/devices/{device_id}/commands/{command_id}/status")
     suspend fun updateCommandStatus(
         @Path("device_id") deviceId: String,
         @Path("command_id") commandId: Long,

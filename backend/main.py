@@ -15,7 +15,7 @@ import backend.models.user
 import backend.models.device
 import backend.models.policy
 import backend.models.telemetry
-import backend.models.android_management
+# import backend.models.android_management
 # ✅ NOVO: Importar modelos RBAC
 import backend.models.role
 import backend.models.permission
@@ -185,7 +185,7 @@ async def lifespan(app: FastAPI):
     # ── AMAPI OPERATION POLLER ────────────────────────────────────────────────
     # Polls Google long-running operations for DISPATCHED AMAPI commands
     # and advances them to EXECUTED or FAILED.
-    from backend.services.amapi_operation_poller import amapi_operation_poller
+    # from backend.services.amapi_operation_poller import amapi_operation_poller
     from backend.core import async_session_maker
 
     # Ensure operation_id column exists on command_queue (additive migration)
@@ -209,8 +209,8 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"⚠️  operation_id migration: {e}")
 
-    asyncio.create_task(amapi_operation_poller())
-    print("⏰ AMAPI Operation Poller registrado.")
+    # asyncio.create_task(amapi_operation_poller())
+    # print("⏰ AMAPI Operation Poller registrado.")
 
     yield
 
@@ -288,7 +288,7 @@ from backend.api import websocket_routes
 from backend.api import rbac_routes
 # ✅ FASE 3: Importar rotas de Policy Enterprise
 from backend.api import policy_routes
-from backend.api import android_management_routes
+# from backend.api import android_management_routes
 
 app.include_router(routes.router, prefix="/api")
 app.include_router(auth_router, prefix="/api/auth")
@@ -297,7 +297,7 @@ app.include_router(websocket_routes.router, prefix="/api")
 app.include_router(rbac_routes.router, prefix="/api")
 # ✅ FASE 3: Registrar rotas de Policy Enterprise
 app.include_router(policy_routes.router)
-app.include_router(android_management_routes.router, prefix="/api")
+# app.include_router(android_management_routes.router, prefix="/api")
 
 # ✅ REPOSITÓRIO ESTÁTICO: Hospedagem de APKs e outros recursos
 static_path = Path(__file__).resolve().parent / "static"

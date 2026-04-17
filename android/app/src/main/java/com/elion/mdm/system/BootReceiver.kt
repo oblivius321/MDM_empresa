@@ -17,6 +17,7 @@ class BootReceiver : BroadcastReceiver() {
 
     companion object {
         private const val TAG = "ElionBootReceiver"
+        private const val MAX_ENROLLMENT_RESUME_AGE_MS = 15 * 60 * 1000L
     }
 
     @OptIn(DelicateCoroutinesApi::class)
@@ -55,6 +56,17 @@ class BootReceiver : BroadcastReceiver() {
             val bootstrapToken = stateInfo.metadata["bootstrap_token"]
             val apiUrl = stateInfo.metadata["api_url"]
             if (!bootstrapToken.isNullOrBlank() && !apiUrl.isNullOrBlank()) {
+                val stateAgeMs = System.currentTimeMillis() - stateInfo.timestamp
+                if (stateInfo.isInCooldown() || stateAgeMs > MAX_ENROLLMENT_RESUME_AGE_MS) {
+                    Log.w(TAG, "Boot fallback ignorado: token de enrollment pendente esta expirado ou em cooldown.")
+                    MDMStateMachine.transitionTo(
+                        context,
+                        MDMState.ERROR,
+                        error = "stale_enrollment_token_not_retried"
+                    )
+                    return
+                }
+
                 EnrollDeviceUseCase(context.applicationContext).enroll(
                     bootstrapToken,
                     apiUrl,

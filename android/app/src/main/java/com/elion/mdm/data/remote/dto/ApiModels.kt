@@ -15,7 +15,7 @@ data class EnrollmentRequest(
     @SerializedName("device_id")        val deviceId: String,
     @SerializedName("name")             val name: String,
     @SerializedName("device_type")       val deviceType: String = "android",
-    @SerializedName("bootstrap_token")  val bootstrapSecret: String,
+    @SerializedName("bootstrap_token")  val bootstrapToken: String,
     @SerializedName("extra_data")       val extraData: Map<String, String>? = null
 )
 
@@ -43,15 +43,21 @@ data class CheckinResponse(
 // ─── Commands ─────────────────────────────────────────────────────────────────
 
 data class DeviceCommand(
-    @SerializedName("id")         val id: Long,
-    @SerializedName("type")       val type: String,
-    @SerializedName("payload")    val payload: Map<String, String> = emptyMap(),
-    @SerializedName("created_at") val createdAt: String? = null
+    @SerializedName(value = "id", alternate = ["command_id"])
+    val id: Long,
+    @SerializedName(value = "command_type", alternate = ["type", "action"])
+    val type: String,
+    @SerializedName("payload")
+    val payload: Map<String, Any?> = emptyMap(),
+    @SerializedName("created_at")
+    val createdAt: String? = null
 )
 
 data class CommandCompleteRequest(
-    @SerializedName("status")  val status: String,
-    @SerializedName("message") val message: String? = null
+    @SerializedName("status")
+    val status: String,
+    @SerializedName(value = "error_message", alternate = ["message"])
+    val errorMessage: String? = null
 )
 
 // ─── Policy ───────────────────────────────────────────────────────────────────
@@ -96,8 +102,12 @@ object CommandType {
     const val STATUS_BAR_DISABLE = "DISABLE_STATUS_BAR"
     const val STATUS_BAR_ENABLE  = "ENABLE_STATUS_BAR"
     const val INSTALL_APK        = "INSTALL_APK"
+    const val INSTALL_APP        = "INSTALL_APP"
     const val REBOOT             = "REBOOT"
     const val SYNC_POLICY        = "SYNC_POLICY"
+    const val EXIT_KIOSK         = "EXIT_KIOSK"
+    const val ENABLE_KIOSK       = "ENABLE_KIOSK"
+    const val DISABLE_KIOSK      = "DISABLE_KIOSK"
 }
 
 // ─── State Report ─────────────────────────────────────────────────────────────

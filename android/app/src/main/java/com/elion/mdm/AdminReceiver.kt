@@ -30,8 +30,16 @@ class AdminReceiver : DeviceAdminReceiver() {
         }
     }
 
+    private fun firstBundleString(bundle: android.os.PersistableBundle?, vararg keys: String): String? {
+        return keys.firstNotNullOfOrNull { key ->
+            bundle?.getString(key)?.trim()?.takeIf { it.isNotBlank() }
+        }
+    }
+
     override fun onEnabled(context: Context, intent: Intent) {
         super.onEnabled(context, intent)
+        Log.d("MDM", "Device Admin Enabled")
+        Log.d("MDM", "Device Owner component: ${context.packageName}/${getComponentName(context).className}")
         Log.i(TAG, "✅ Device Admin HABILITADO")
     }
 
@@ -39,7 +47,9 @@ class AdminReceiver : DeviceAdminReceiver() {
         super.onDisabled(context, intent)
         Log.w(TAG, "⚠️ Device Admin DESABILITADO — Limpando dados locais de segurança")
         try {
-            SecurePreferences(context).clearAll()
+            val prefs = SecurePreferences(context)
+            prefs.clearAll()
+            prefs.mdmState = com.elion.mdm.domain.MdmState.UNCONFIGURED
         } catch (e: Exception) {
             Log.e(TAG, "Erro ao limpar preferências: ${e.message}")
         }
@@ -53,32 +63,27 @@ class AdminReceiver : DeviceAdminReceiver() {
         val pendingResult = goAsync()
         GlobalScope.launch(Dispatchers.IO) {
             try {
+                val prefs = SecurePreferences(context)
                 val bundle = intent.getParcelableExtra<android.os.PersistableBundle>(android.app.admin.DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE)
                 
-                val bootstrapToken = bundle?.getString("bootstrap_token") ?: ""
+                val bootstrapToken = firstBundleString(
+                    bundle,
+                    "bootstrap_token",
+                    "bootstrap_secret",
+                    "enrollment_token"
+                ) ?: ""
                 val apiUrl = bundle?.getString("api_url") ?: ""
                 val profileId = bundle?.getString("profile_id") ?: ""
                 
-                Log.d(TAG, "Provisioning Bundle Recebido -> token_presente=${bootstrapToken.isNotEmpty()}, api=$apiUrl, profile=$profileId")
+                Log.d(TAG, "Provisioning Bundle Receivado -> token_presente=${bootstrapToken.isNotEmpty()}, api=$apiUrl, profile=$profileId")
                 
                 if (bootstrapToken.isBlank() || apiUrl.isBlank()) {
-                    MDMStateMachine.transitionTo(
-                        context,
-                        MDMState.ERROR,
-                        error = "QR sem bootstrap_token ou api_url"
-                    )
+                    prefs.mdmState = com.elion.mdm.domain.MdmState.UNCONFIGURED
                     return@launch
                 }
 
-                MDMStateMachine.transitionTo(
-                    context,
-                    MDMState.REGISTERING,
-                    metadata = mapOf(
-                        "bootstrap_token" to bootstrapToken,
-                        "api_url" to apiUrl,
-                        "profile_id" to profileId
-                    )
-                )
+                // 1. Transição para ENROLLING
+                prefs.mdmState = com.elion.mdm.domain.MdmState.ENROLLING
 
                 EnrollDeviceUseCase(context.applicationContext).enroll(
                     bootstrapToken,
@@ -87,11 +92,7 @@ class AdminReceiver : DeviceAdminReceiver() {
                 )
             } catch (e: Exception) {
                 Log.e(TAG, "Erro grave no Bootstrapping do QR: ${e.message}")
-                MDMStateMachine.transitionTo(
-                    context,
-                    MDMState.ERROR,
-                    error = "bootstrapping_failed: ${e.message ?: ""}"
-                )
+                SecurePreferences(context).mdmState = com.elion.mdm.domain.MdmState.UNCONFIGURED
             } finally {
                 pendingResult.finish()
             }

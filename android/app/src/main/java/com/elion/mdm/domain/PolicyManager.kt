@@ -6,6 +6,7 @@ import android.content.Context
 import android.util.Log
 import com.elion.mdm.data.local.SecurePreferences
 import com.elion.mdm.data.remote.dto.BootstrapResponse
+import com.elion.mdm.system.DevMode
 import com.elion.mdm.system.KioskManager
 import org.json.JSONArray
 
@@ -63,8 +64,10 @@ class PolicyManager(
                 ?: numberValue(passwordRequirements["min_length"])
                 ?: numberValue(config["min_password_length"])
                 ?: 4
-            dpm.setPasswordQuality(admin, DevicePolicyManager.PASSWORD_QUALITY_SOMETHING)
-            dpm.setPasswordMinimumLength(admin, minPassword)
+            DevMode.applyPolicySafe("password quality/minimum length") {
+                dpm.setPasswordQuality(admin, DevicePolicyManager.PASSWORD_QUALITY_SOMETHING)
+                dpm.setPasswordMinimumLength(admin, minPassword)
+            }
 
             val screenTimeoutSeconds = numberValue(settings["screen_timeout_seconds"])
                 ?: numberValue(config["screen_timeout_seconds"])
