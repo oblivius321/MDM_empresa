@@ -1,4 +1,4 @@
-from sqlalchemy import String, Integer, JSON, Boolean, DateTime, ForeignKey, Index, Uuid, Text
+from sqlalchemy import String, Integer, JSON, Boolean, DateTime, ForeignKey, Index, Uuid, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.ext.hybrid import hybrid_property
 from datetime import datetime
@@ -226,3 +226,28 @@ class PolicyState(Base):
     failed_subcommands: Mapped[list] = mapped_column(JSON, default=list) # Lista de actions que falharam
 
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class DevicePolicyAssignment(Base):
+    """
+    Rastreia atribuicoes diretas de policies enterprise a dispositivos.
+    """
+    __tablename__ = "device_policy_assignments"
+    __table_args__ = (
+        UniqueConstraint("device_id", "policy_id", name="uq_device_policy_assignments_device_policy"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, index=True)
+    device_id: Mapped[str] = mapped_column(String, ForeignKey("devices.device_id"), index=True)
+    policy_id: Mapped[int] = mapped_column(Integer, ForeignKey("policies_v2.id"), index=True)
+    issued_by: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    device: Mapped["Device"] = relationship("Device")
+    policy: Mapped["Policy"] = relationship("Policy")
+
+    def __repr__(self):
+        return (
+            f"<DevicePolicyAssignment(device={self.device_id}, policy={self.policy_id}, "
+            f"issued_by={self.issued_by})>"
+        )

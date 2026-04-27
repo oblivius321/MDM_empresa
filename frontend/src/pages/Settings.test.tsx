@@ -14,7 +14,7 @@ vi.mock('@/contexts/AuthContext', () => ({
 }));
 
 vi.mock('@/services/api', () => ({
-  API_DISPLAY_URL: 'http://localhost/api',
+  API_DISPLAY_URL: 'http://localhost:8200/api',
   buildApiUrl: (path: string) => `/api${path}`,
   userService: {
     getMe: apiMocks.getMe,

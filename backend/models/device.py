@@ -34,6 +34,13 @@ class Device(Base):
     
     # Armazenar campos EXTRAS que não têm coluna própria (android-specific)
     metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    last_apps_json: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+
+    # Telemetria em tempo real (último estado conhecido)
+    battery_level: Mapped[Optional[int]] = mapped_column(nullable=True)
+    free_disk_space_mb: Mapped[Optional[int]] = mapped_column(nullable=True)
+    latitude: Mapped[Optional[float]] = mapped_column(nullable=True)
+    longitude: Mapped[Optional[float]] = mapped_column(nullable=True)
 
     # Controle de Sincronização
     policy_outdated: Mapped[bool] = mapped_column(Boolean, default=False, index=True)

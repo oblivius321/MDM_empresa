@@ -23,12 +23,6 @@ class AllowedAppAdapter(
     private val onAppClick: (AppInfo) -> Unit
 ) : RecyclerView.Adapter<AllowedAppAdapter.AppViewHolder>() {
 
-    data class AppInfo(
-        val packageName: String,
-        val label: String,
-        val icon: android.graphics.drawable.Drawable?
-    )
-
     inner class AppViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val icon: ImageView = view.findViewById(R.id.app_icon)
         val label: TextView = view.findViewById(R.id.app_label)

@@ -99,9 +99,13 @@ class CommandHandler(private val context: Context) {
     }
 
     private fun handleKioskEnable(command: DeviceCommand) {
-        val allowedPackages = payloadStringList(command, "allowed_packages", "allowed_apps", "packages")
+        val targetPackage = payloadString(command, "package_name", "kiosk_package", "package")
+        val allowedPackages = (
+            payloadStringList(command, "allowed_packages", "allowed_apps", "packages") +
+                listOfNotNull(targetPackage)
+            ).distinct()
         kioskManager.enableKiosk(allowedPackages)
-        Log.i(TAG, "KIOSK_ENABLE via KioskManager (${allowedPackages.size} apps)")
+        Log.i(TAG, "KIOSK_ENABLE via KioskManager (${allowedPackages.size} apps, target=${targetPackage ?: "none"})")
     }
 
     private fun handleKioskDisable() {

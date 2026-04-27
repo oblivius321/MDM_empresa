@@ -83,24 +83,46 @@ async def get_device_desired_state(device_id: str) -> Tuple[dict, str]:
     Retorna: (merged_config, effective_hash)
     """
     from backend.core.database import async_session_maker
-    from backend.models.policy import DevicePolicy, Policy
+    from backend.models.policy import DevicePolicy, DevicePolicyAssignment, Policy, ProvisioningProfilePolicy
     from sqlalchemy.future import select
-    from sqlalchemy import and_
 
     async with async_session_maker() as db:
-        # Busca todas as policies ativas vinculadas a este device
-        result = await db.execute(
-            select(Policy)
-            .join(DevicePolicy, DevicePolicy.policy_id == Policy.id)
-            .where(
-                and_(
-                    DevicePolicy.device_id == device_id,
+        profile_result = await db.execute(
+            select(DevicePolicy.profile_id).where(DevicePolicy.device_id == device_id)
+        )
+        profile_id = profile_result.scalar_one_or_none()
+
+        policies: List[Policy] = []
+
+        if profile_id is not None:
+            result = await db.execute(
+                select(Policy)
+                .join(ProvisioningProfilePolicy, ProvisioningProfilePolicy.policy_id == Policy.id)
+                .where(
+                    ProvisioningProfilePolicy.profile_id == profile_id,
                     Policy.is_active == True,
                 )
+                .order_by(ProvisioningProfilePolicy.priority.asc())
+            )
+            policies.extend(result.scalars().all())
+
+        direct_result = await db.execute(
+            select(Policy)
+            .join(DevicePolicyAssignment, DevicePolicyAssignment.policy_id == Policy.id)
+            .where(
+                DevicePolicyAssignment.device_id == device_id,
+                Policy.is_active == True,
             )
             .order_by(Policy.priority.asc())
         )
-        policies = result.scalars().all()
+        policies.extend(direct_result.scalars().all())
+
+        # Dedupe por id preservando a política com maior precedência de scope/priority.
+        scope_order = {"global": 0, "group": 1, "device": 2}
+        policies = sorted(
+            {policy.id: policy for policy in policies}.values(),
+            key=lambda policy: (scope_order.get(policy.scope, 0), policy.priority),
+        )
 
         if not policies:
             return {}, ""
@@ -242,8 +264,9 @@ async def _do_evaluate(
             }
 
         # ── 7. Despachar subcomandos via CommandQueue ─────────────────────────
+        from backend.core import utcnow
         state.last_compliance_status = "enforcing"
-        state.last_enforced_at = datetime.now(timezone.utc)
+        state.last_enforced_at = utcnow()
         state.enforcement_count = (state.enforcement_count or 0) + 1
         state.drift_score = (state.drift_score or 0) + len(subcommands)
         await db.commit()

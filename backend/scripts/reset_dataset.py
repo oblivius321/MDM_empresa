@@ -1,6 +1,7 @@
 import asyncio
 import uuid
 import logging
+import os
 from sqlalchemy import text
 from backend.core.database import engine, Base, async_session_maker
 from backend.core.security import get_password_hash

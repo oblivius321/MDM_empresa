@@ -5,7 +5,9 @@ import com.elion.mdm.data.local.SecurePreferences
 import com.elion.mdm.data.remote.dto.EnrollmentResponse
 import com.elion.mdm.data.repository.DeviceRepository
 import com.elion.mdm.domain.DevicePolicyHelper
+import com.elion.mdm.domain.utils.NetworkUtils
 import com.elion.mdm.services.MDMForegroundService
+import com.elion.mdm.system.DevMode
 import org.json.JSONArray
 
 /**
@@ -30,15 +32,17 @@ class EnrollDeviceUseCase(private val context: Context) {
         prefs.mdmState = com.elion.mdm.domain.MdmState.ENROLLING
 
         // Transição legada (compatibilidade temporária com o Reporter/StateMachine antigo se necessário)
+        val metadata = mutableMapOf(
+            "bootstrap_token" to bootstrapToken,
+            "api_url" to backendUrl,
+            "backend_url" to backendUrl,
+        )
+        profileId?.trim()?.takeIf { it.isNotBlank() }?.let { metadata["profile_id"] = it }
+
         com.elion.mdm.system.MDMStateMachine.transitionTo(
-            context, 
+            context,
             com.elion.mdm.system.MDMState.REGISTERING,
-            metadata = mapOf(
-                "bootstrap_token" to bootstrapToken,
-                "api_url" to backendUrl,
-                "backend_url" to backendUrl,
-                "profile_id" to (profileId ?: "")
-            )
+            metadata = metadata
         )
 
         val result = repository.enroll(bootstrapToken, backendUrl, profileId)
@@ -84,16 +88,27 @@ class GetDeviceStatusUseCase(private val context: Context) {
         val allowedPackages = readAllowedPackages()
 
         return DeviceStatus(
-            isEnrolled       = repository.isEnrolled(),
-            deviceId         = repository.getDeviceId(),
-            lastSyncMs       = repository.getLastSyncTimestamp(),
-            isDeviceOwner    = dpm.isDeviceOwner(),
-            isCameraDisabled = dpm.isCameraDisabled(),
-            isKioskEnabled   = prefs.isKioskEnabled,
-            isLockTaskActive = dpm.isInLockTaskMode(),
+            isEnrolled       = safe(false) { repository.isEnrolled() },
+            deviceId         = safe<String?>(null) { repository.getDeviceId() },
+            lastSyncMs       = safe(0L) { repository.getLastSyncTimestamp() },
+            isDeviceOwner    = safe(false) { dpm.isDeviceOwner() },
+            isCameraDisabled = safe(false) { dpm.isCameraDisabled() },
+            isKioskEnabled   = safe(false) { prefs.isKioskEnabled },
+            isLockTaskActive = safe(false) { dpm.isInLockTaskMode() },
             allowedPackages  = allowedPackages,
-            kioskPackages    = dpm.getKioskPackages().toList()
+            kioskPackages    = safe(emptyList()) { dpm.getKioskPackages().toList() },
+            kioskTargetPackage = safe<String?>(null) { prefs.kioskTargetPackage },
+            backendUrl       = safe("") { prefs.backendUrl },
+            networkType      = safe("unknown") { NetworkUtils.getNetworkType(context) },
+            lastWsConnectedAt = safe(0L) { prefs.lastWsConnectedAt },
+            wsReconnectCount = safe(0) { prefs.wsReconnectCount },
+            lastErrorCode    = safe<String?>(null) { prefs.lastErrorCode },
+            isDevMode        = DevMode.isDevMode()
         )
+    }
+
+    private inline fun <T> safe(defaultValue: T, block: () -> T): T {
+        return runCatching(block).getOrDefault(defaultValue)
     }
 
     private fun readAllowedPackages(): List<String> {
@@ -117,5 +132,12 @@ data class DeviceStatus(
     val isKioskEnabled  : Boolean,
     val isLockTaskActive: Boolean,
     val allowedPackages : List<String>,
-    val kioskPackages   : List<String>
+    val kioskPackages   : List<String>,
+    val kioskTargetPackage: String?,
+    val backendUrl      : String,
+    val networkType     : String,
+    val lastWsConnectedAt: Long,
+    val wsReconnectCount: Int,
+    val lastErrorCode   : String?,
+    val isDevMode       : Boolean
 )

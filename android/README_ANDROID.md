@@ -48,15 +48,17 @@ android/
 adb shell dpm set-device-owner com.elion.mdm/.AdminReceiver
 ```
 
+Para o APK dev, o pacote instalado e o Device Owner mudam para `com.elion.mdm.dev`.
+
 ## Enrollment via ADB USB
 
 Use este fluxo enquanto o QR Code/AMAPI estiver bloqueado por cota. O comando `dpm set-device-owner` exige aparelho recem-resetado, sem conta Google configurada e sem outro Device Owner.
 
 ```bash
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb shell dpm set-device-owner com.elion.mdm/.AdminReceiver
+adb install -r app/build/outputs/apk/dev/debug/app-dev-debug.apk
+adb shell dpm set-device-owner com.elion.mdm.dev/.AdminReceiver
 adb reverse tcp:8200 tcp:8200
-adb shell am start -n com.elion.mdm/.presentation.MainActivity --es api_url http://127.0.0.1:8200 --es bootstrap_token SEU_TOKEN --es profile_id SEU_PROFILE_ID
+adb shell am start -n com.elion.mdm.dev/.presentation.MainActivity --es api_url http://127.0.0.1:8200 --es bootstrap_token SEU_TOKEN --es profile_id SEU_PROFILE_ID
 ```
 
 Se nao usar `adb reverse`, troque `api_url` pelo IP acessivel pelo Android, por exemplo `http://192.168.25.227:8200`.

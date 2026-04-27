@@ -57,12 +57,15 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvCamera          : TextView
     private lateinit var tvKiosk           : TextView
     private lateinit var tvAllowedApps     : TextView
+    private lateinit var tvPolicyMode      : TextView
+    private lateinit var tvBackendStatus   : TextView
     private lateinit var tvControllerMessage: TextView
     private lateinit var btnRefresh        : Button
     private lateinit var btnManageApps     : Button
     private lateinit var btnEnableKiosk    : Button
 
     // Shared
+    private lateinit var loadingOverlay    : View
     private lateinit var progressBar       : ProgressBar
     private lateinit var tvDevModeBanner   : TextView
 
@@ -106,11 +109,14 @@ class MainActivity : AppCompatActivity() {
         tvCamera          = findViewById(R.id.tv_camera)
         tvKiosk           = findViewById(R.id.tv_kiosk)
         tvAllowedApps     = findViewById(R.id.tv_allowed_apps)
+        tvPolicyMode      = findViewById(R.id.tv_policy_mode)
+        tvBackendStatus   = findViewById(R.id.tv_backend_status)
         tvControllerMessage = findViewById(R.id.tv_controller_message)
         btnRefresh        = findViewById(R.id.btn_refresh)
         btnManageApps     = findViewById(R.id.btn_manage_apps)
         btnEnableKiosk    = findViewById(R.id.btn_enable_kiosk)
 
+        loadingOverlay    = findViewById(R.id.loading_overlay)
         progressBar       = findViewById(R.id.progress_bar)
         tvDevModeBanner   = findViewById(R.id.tv_dev_mode_banner)
     }
@@ -122,7 +128,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         tvDevModeBanner.visibility = View.VISIBLE
-        tvDevModeBanner.text = "DEV MODE - safe build"
+        tvDevModeBanner.text = "DEV MODE - soft kiosk, sem lock de rede movel"
         DevMode.showLaunchToast(this)
     }
 
@@ -131,13 +137,14 @@ class MainActivity : AppCompatActivity() {
     private fun observeState() {
         lifecycleScope.launch {
             viewModel.uiState.collect { state ->
+                loadingOverlay.visibility = if (state.isLoading) View.VISIBLE else View.GONE
                 progressBar.visibility = if (state.isLoading) View.VISIBLE else View.GONE
                 btnEnroll.isEnabled    = !state.isLoading
                 btnRefresh.isEnabled   = !state.isLoading
 
                 if (!state.errorMessage.isNullOrBlank()) {
                     if (state.errorMessage?.contains("404") == true) {
-                        tvEnrollError.text = "${state.errorMessage}\n💡 Dica: Verifique se a porta é 8000 (Backend) e não 3000 (Frontend)."
+                        tvEnrollError.text = "${state.errorMessage}\nDica: use a URL do backend acessivel pelo Android, por exemplo http://192.168.25.227:8200, e nao a porta do frontend."
                     } else {
                         tvEnrollError.text = state.errorMessage
                     }
@@ -272,7 +279,13 @@ class MainActivity : AppCompatActivity() {
         tvCamera.text    = "Câmera: ${if (status.isCameraDisabled) "🔴 Desativada" else "🟢 Ativa"}"
         tvKiosk.text     = buildString {
             append("Kiosk: ")
-            append(if (status.isKioskEnabled) "Ativo" else "Desativado")
+            append(
+                when {
+                    status.isKioskEnabled && status.isDevMode -> "Soft ativo (DEV)"
+                    status.isKioskEnabled -> "Hard ativo"
+                    else -> "Desativado"
+                }
+            )
             append(" | Lock Task: ")
             append(if (status.isLockTaskActive) "Ativo" else "Inativo")
         }
@@ -280,6 +293,32 @@ class MainActivity : AppCompatActivity() {
             append("Allowed apps: ${status.allowedPackages.size}")
             if (status.kioskPackages.isNotEmpty()) {
                 append(" | DPM packages: ${status.kioskPackages.size}")
+            }
+            if (!status.kioskTargetPackage.isNullOrBlank()) {
+                append("\nTarget app: ${status.kioskTargetPackage}")
+            }
+        }
+        tvPolicyMode.text = if (status.isDevMode) {
+            "Policy mode: ${DevMode.softKioskSummary()}"
+        } else {
+            "Policy mode: PROD hard enforcement ativo quando a policy exigir."
+        }
+        tvBackendStatus.text = buildString {
+            append("Backend: ")
+            append(status.backendUrl.ifBlank { "não configurado" })
+            append("\nRede: ")
+            append(status.networkType.uppercase(Locale.getDefault()))
+            append(" | WS: ")
+            append(
+                if (status.lastWsConnectedAt > 0L) {
+                    "último OK ${formatTimestamp(status.lastWsConnectedAt)}"
+                } else {
+                    "sem conexão ainda"
+                }
+            )
+            append(" | Reconnects: ${status.wsReconnectCount}")
+            if (!status.lastErrorCode.isNullOrBlank()) {
+                append("\nÚltimo erro: ${status.lastErrorCode}")
             }
         }
         btnEnableKiosk.text = "Enable Kiosk Mode"

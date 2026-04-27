@@ -16,6 +16,8 @@
 
 O frontend é um dashboard administrativo SPA para gerenciamento de frotas de dispositivos Android corporativos. Oferece visibilidade em tempo real do status dos dispositivos, saúde de compliance, enforcement de políticas e execução remota de comandos — tudo alimentado por uma conexão WebSocket persistente com o backend.
 
+**O dashboard se conecta diretamente ao backend FastAPI na porta `8200` — sem Nginx ou proxy reverso.**
+
 ---
 
 ## Estrutura de Diretórios
@@ -39,6 +41,7 @@ frontend/src/
 │       ├── KioskSettingsBlock.tsx  # Configuração do modo kiosk
 │       └── AppManagementBlock.tsx  # Whitelist/blacklist de apps
 ├── hooks/
+│   ├── useDevices.ts             # Hook de busca e polling de dispositivos
 │   └── useMDMWebSocket.ts        # Hook de ciclo de vida WebSocket
 ├── services/
 │   └── api.ts                    # Cliente Axios (interceptor JWT)
@@ -59,8 +62,8 @@ frontend/src/
 | `/login` | Login | Autenticação JWT |
 | `/dashboard` | Dashboard | KPIs da frota: contagem online, compliance score, alertas |
 | `/devices` | Devices | Lista de dispositivos em tempo real com badges de status |
-| `/devices/:id` | DeviceDetail | Telemetria individual, **Fila de Comandos (Enviado, Pendente, Falha, Latência)**, envio remoto, histórico completo |
-| `/policies` | Policies | CRUD de Provisioning Profiles |
+| `/devices/:id` | DeviceDetail | Telemetria individual (bateria, GPS, apps, armazenamento), fila de comandos, envio remoto |
+| `/policies` | Policies | CRUD de Provisioning Profiles com editor visual |
 | `/logs` | Logs | Trilha de auditoria com filtros por ação/ator |
 | `/settings` | Settings | Preferências da plataforma |
 
@@ -69,7 +72,7 @@ frontend/src/
 O dashboard mantém uma conexão WebSocket persistente para receber atualizações ao vivo:
 
 ```
-Dashboard ──► /api/ws/dashboard?token={jwt}
+Dashboard ──► ws://<IP>:8200/api/ws/dashboard?token={jwt}
                     │
                     ├── DEVICE_ONLINE / DEVICE_OFFLINE
                     ├── COMPLIANCE_UPDATE (mudança de score)
@@ -77,6 +80,8 @@ Dashboard ──► /api/ws/dashboard?token={jwt}
                     ├── CMD_RETRYING
                     └── POLICY_DRIFT_DETECTED
 ```
+
+> **Nota:** A conexão WebSocket vai diretamente para o backend na porta `8200`. Não há proxy intermediário.
 
 **Hook: `useMDMWebSocket`**
 - Gerencia conexão, reconexão e despacho de mensagens.
@@ -95,7 +100,8 @@ Utiliza **Zustand** (`useMDMStore`) para estado global leve:
 Todas as chamadas REST passam pelo `services/api.ts`:
 - Instância Axios com interceptor de token JWT.
 - Tratamento automático de refresh de token.
-- URL base configurada via variável de ambiente.
+- URL base configurada via variável de ambiente (`VITE_API_URL`).
+- Conexão direta com o backend na porta `8200`.
 
 > Para a referência completa de endpoints da API, veja o [README do Backend](../backend/README.md).
 
@@ -121,10 +127,10 @@ npm run build
 
 Configure via `.env` no diretório `frontend/`:
 
-| Variável | Propósito |
-|---|---|
-| `VITE_API_URL` | URL base da API do backend |
-| `VITE_WS_URL` | Endpoint WebSocket |
+| Variável | Propósito | Exemplo |
+|---|---|---|
+| `VITE_API_URL` | URL base da API do backend | `http://192.168.25.227:8200` |
+| `VITE_WS_URL` | Endpoint WebSocket | `ws://192.168.25.227:8200` |
 
 ### Docker
 
@@ -132,6 +138,9 @@ Configure via `.env` no diretório `frontend/`:
 # Modo desenvolvimento (a partir da raiz do projeto)
 docker compose up frontend -d
 # → disponível em http://localhost:3000
+
+# O frontend container faz proxy das chamadas API
+# para o backend container na rede Docker interna
 ```
 
 ---
@@ -148,3 +157,5 @@ docker compose up frontend -d
 | Zustand | Gerenciamento de estado leve |
 | Axios | Cliente HTTP |
 | WebSocket API | Comunicação em tempo real |
+| Lucide React | Ícones |
+| date-fns | Formatação de datas (com suporte a pt-BR) |

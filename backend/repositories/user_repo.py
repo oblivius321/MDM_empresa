@@ -1,14 +1,19 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import selectinload
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from backend.models.user import User
+from backend.models.role import Role
 
 class UserRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
     async def get_by_email(self, email: str) -> User | None:
-        result = await self.db.execute(select(User).where(User.email == email))
+        result = await self.db.execute(
+            select(User)
+            .options(selectinload(User.roles).selectinload(Role.permissions))
+            .where(User.email == email)
+        )
         return result.scalar_one_or_none()
 
     async def create(self, user: User) -> User:
@@ -26,5 +31,9 @@ class UserRepository:
     
     async def get_by_id(self, user_id: int) -> User | None:
         """Busca um usuário por ID"""
-        result = await self.db.execute(select(User).where(User.id == user_id))
+        result = await self.db.execute(
+            select(User)
+            .options(selectinload(User.roles).selectinload(Role.permissions))
+            .where(User.id == user_id)
+        )
         return result.scalar_one_or_none()

@@ -49,10 +49,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
             enrollUseCase.enroll(bootstrapToken, backendUrl, profileId)
                 .onSuccess {
+                    // 🚀 Iniciar o serviço MDM imediatamente após o enrollment
+                    com.elion.mdm.services.MDMForegroundService.start(getApplication())
+                    
                     _uiState.value = _uiState.value.copy(
                         isLoading    = false,
                         deviceStatus = statusUseCase(),
-                        actionMessage = null
+                        actionMessage = "Enrollment realizado com sucesso!"
                     )
                 }
                 .onFailure { err ->
@@ -121,6 +124,43 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             errorMessage = null,
             actionMessage = null
         )
+        
+        // 🚀 Forçar um check-in na rede ao clicar em Refresh
+        viewModelScope.launch {
+            try {
+                val api = com.elion.mdm.data.remote.ApiClient.getInstance(getApplication())
+                val deviceId = prefs.deviceId
+                if (!deviceId.isNullOrBlank() && prefs.hasValidToken()) {
+                    // Nota: Aqui estamos simulando o que o serviço faz para dar feedback imediato na UI
+                    _uiState.value = _uiState.value.copy(isLoading = true)
+                    
+                    // Coleta básica para o refresh manual
+                    val request = com.elion.mdm.data.remote.dto.CheckinRequest(
+                        batteryLevel = 0, // O backend vai ignorar se for 0 ou podemos coletar real
+                        complianceStatus = if (dpm.isDeviceOwner()) "compliant" else "non_compliant",
+                        deviceModel = android.os.Build.MODEL
+                    )
+                    
+                    val response = api.checkin(deviceId, request)
+                    if (response.isSuccessful) {
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            actionMessage = "Sync realizado!",
+                            deviceStatus = statusUseCase()
+                        )
+                        // Notifica o serviço para atualizar também
+                        com.elion.mdm.services.MDMForegroundService.start(getApplication())
+                    } else {
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            errorMessage = "Erro no Sync: ${response.code()}"
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(isLoading = false)
+            }
+        }
     }
 
     private fun readAllowedPackages(): List<String> {

@@ -148,6 +148,9 @@ class AdminPanelActivity : AppCompatActivity() {
         findViewById<View>(R.id.btn_exit_kiosk).setOnClickListener {
             confirmExitKiosk()
         }
+        findViewById<View>(R.id.btn_remove_device_owner).setOnClickListener {
+            confirmRemoveDeviceOwner()
+        }
     }
 
     // ─── Refresh State ────────────────────────────────────────────────────────
@@ -316,6 +319,33 @@ class AdminPanelActivity : AppCompatActivity() {
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
+
+    private fun confirmRemoveDeviceOwner() {
+        if (!dpm.isDeviceOwner()) {
+            Toast.makeText(this, "Este dispositivo nao esta em modo Device Owner", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Remover Device Owner")
+            .setMessage("Tem certeza que deseja remover o Device Owner?\n\nEssa acao vai desativar o kiosk antes da remocao.")
+            .setPositiveButton("Confirmar") { _, _ ->
+                if (prefs.isKioskEnabled) {
+                    kioskManager.disableKiosk()
+                }
+
+                dpm.removeDeviceOwner()
+                    .onSuccess {
+                        Toast.makeText(this, "Device Owner removido", Toast.LENGTH_LONG).show()
+                        finishAffinity()
+                    }
+                    .onFailure {
+                        Toast.makeText(this, "Falha ao remover Device Owner: ${it.message}", Toast.LENGTH_LONG).show()
+                    }
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
 
     private fun getAllowedPackages(): List<String> {
         return try {

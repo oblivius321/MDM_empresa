@@ -13,6 +13,13 @@ class DeviceBase(BaseModel):
     model: Optional[str] = None
     android_version: Optional[str] = None
     company: Optional[str] = None
+    last_apps_json: Optional[List[str]] = None
+    
+    # Telemetria em tempo real (Cacheada na tabela Device)
+    battery_level: Optional[int] = None
+    free_disk_space_mb: Optional[int] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 
 class DeviceCreate(DeviceBase):

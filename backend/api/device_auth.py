@@ -8,9 +8,8 @@ from backend.core.database import get_db
 from backend.models.device import Device
 
 def create_device_token(device_id: str) -> Tuple[str, str]:
-    """Gera um token limpo e o seu hash SHA-256 para salvar no banco."""
-    raw_secret = secrets.token_urlsafe(32)
-    token = f"{device_id}:{raw_secret}"
+    """Gera um token opaco e o seu hash SHA-256 para salvar no banco."""
+    token = secrets.token_urlsafe(48)
     token_hash = hashlib.sha256(token.encode()).hexdigest()
     return token, token_hash
 
@@ -23,43 +22,52 @@ def verify_device_token(token: str, stored_hash: str) -> bool:
 async def get_current_device(
     request: Request,
     x_device_token: Optional[str] = Header(None),
-    token: Optional[str] = Query(None), # Para websockets (fallback seguro)
+    authorization: Optional[str] = Header(None),
+    token: Optional[str] = Query(None),
 ) -> Device:
-    # 🛡️ Padrão Enterprise: Headers estritamente separados
-    # Device NÃO deve usar o header 'Authorization' (reservado para Admin/JWT)
-    device_token = x_device_token or token
+    # Log de depuração profunda
+    import logging
+    auth_logger = logging.getLogger("mdm.auth")
+    
+    # Capturar todos os headers para entender o que o Android está mandando
+    headers_dict = dict(request.headers)
+    auth_logger.info(f"🔍 [AUTH DEBUG] Headers recebidos: {headers_dict}")
+    auth_logger.info(f"🔍 [AUTH DEBUG] x_device_token: {x_device_token} | auth_header: {authorization} | query_token: {token}")
+
+    # 🛡️ Padrão Enterprise: Tenta X-Device-Token, depois Authorization (Bearer), depois Query
+    device_token = x_device_token
+    
+    if not device_token and authorization:
+        if authorization.lower().startswith("bearer "):
+            device_token = authorization[7:]
+        else:
+            device_token = authorization # Tenta usar o valor puro se não tiver Bearer
+        
+    if not device_token:
+        device_token = token
     
     if not device_token:
-        # Rejeitar se o device tentar usar Authorization em vez de X-Device-Token
-        if request.headers.get("Authorization"):
-            raise HTTPException(
-                status_code=401, 
-                detail="Invalid auth context. Devices must use X-Device-Token."
-            )
+        auth_logger.warning(f"❌ [AUTH] Token ausente. Host: {request.client.host if request.client else 'unknown'}")
         raise HTTPException(status_code=401, detail="Device token missing")
         
-    try:
-        # Formato esperado: "device_id:secret"
-        parts = device_token.split(":", 1)
-        if len(parts) != 2:
-            raise ValueError()
-        token_device_id = parts[0]
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid device token format")
+    # O token agora é opaco (V4 Mitigation).
+    # Calculamos o hash em memória e buscamos direto pela coluna `api_key_hash`.
+    token_hash = hashlib.sha256(device_token.encode()).hexdigest()
         
     # Obtém a sessão do banco
     db_gen = get_db()
     db = await anext(db_gen)
     
     try:
-        result = await db.execute(select(Device).where(Device.device_id == token_device_id))
+        # Lookup seguro via hash da API key
+        result = await db.execute(select(Device).where(Device.api_key_hash == token_hash))
         device = result.scalar_one_or_none()
         
-        if not device:
-            raise HTTPException(status_code=401, detail="Device not registered")
+        if not device or not device.api_key_hash:
+            raise HTTPException(status_code=401, detail="Invalid device credentials")
             
-        # Validação de Hash (API Key)
-        if not device.api_key_hash or not verify_device_token(device_token, device.api_key_hash):
+        # Verificação constante de tempo (timing attack prevention)
+        if not verify_device_token(device_token, device.api_key_hash):
             raise HTTPException(status_code=401, detail="Invalid device credentials")
             
         if not device.is_active:

@@ -1,15 +1,7 @@
 <p align="center">
-  <h1 align="center">🛡️ Elion MDM</h1>
+  <h1 align="center">Elion MDM</h1>
   <p align="center">
-    <strong>Plataforma Enterprise de Gerenciamento de Dispositivos Móveis</strong>
-  </p>
-  <p align="center">
-    <img src="https://img.shields.io/badge/Backend-FastAPI-009688?style=for-the-badge&logo=fastapi" alt="FastAPI" />
-    <img src="https://img.shields.io/badge/Frontend-React+Vite-61DAFB?style=for-the-badge&logo=react" alt="React" />
-    <img src="https://img.shields.io/badge/Mobile-Kotlin-7F52FF?style=for-the-badge&logo=kotlin" alt="Kotlin" />
-    <img src="https://img.shields.io/badge/DB-PostgreSQL-4169E1?style=for-the-badge&logo=postgresql" alt="PostgreSQL" />
-    <img src="https://img.shields.io/badge/Cache-Redis-DC382D?style=for-the-badge&logo=redis" alt="Redis" />
-    <img src="https://img.shields.io/badge/Infra-Docker-2496ED?style=for-the-badge&logo=docker" alt="Docker" />
+    <strong>Plataforma enterprise de gerenciamento de dispositivos moveis</strong>
   </p>
 </p>
 
@@ -17,134 +9,169 @@
 
 ## Visão Geral
 
-O Elion MDM é uma plataforma full-stack para gerenciamento de frotas de dispositivos Android corporativos. Entrega provisionamento zero-touch, execução de comandos em tempo real, enforcement contínuo de compliance e verificação de confiança vinculada ao hardware — do enrollment até o descomissionamento.
+O Elion MDM é uma plataforma full-stack para gerenciamento de dispositivos Android corporativos. O projeto combina um dashboard web em React, backend FastAPI assíncrono, agente Android nativo e serviços de observabilidade.
 
 | Capacidade | Descrição |
 |---|---|
-| **Enrollment Oficial AMAPI** | Provisionamento Zero-Touch integrando a infraestrutura oficial Google Android Management API (AMAPI) via QR Code |
-| **Comandos Stateful (AMAPI)** | Polling assíncrono e execução de comandos granulares com controle de ciclo de vida e latência de execução |
-| **Drift Detection** | Comparação de hash SHA-256 para desvio de conformidade |
-| **Self-Healing** | State machine com backoff exponencial (anti-brick) |
-| **Trust de Hardware** | Play Integrity API para atestação do dispositivo |
-| **Compliance Scoring** | Score ponderado (0–100) com enforcement automático |
-| **RBAC** | Controle de acesso por roles com anti-escalação de privilégios |
-| **Observabilidade** | Logs JSON estruturados + métricas Prometheus |
+| Enrollment via ADB | Provisionamento manual com Bootstrap Secret |
+| Telemetria Rica | Bateria, GPS, apps instalados, armazenamento e app em foreground |
+| Comandos Stateful | Execucao de comandos com acompanhamento de ciclo de vida (ACK → EXECUTED → VERIFIED) |
+| Drift Detection | Comparacao de hash SHA-256 para detectar desvio de conformidade |
+| Self-Healing | Rotinas de remediacao com backoff controlado e circuit breaker |
+| Trust de Hardware | Integracao com Play Integrity API |
+| Compliance Scoring | Score ponderado com enforcement automatico |
+| RBAC | Controle de acesso por roles e permissoes granulares |
+| Observabilidade | Logs estruturados JSON e metricas Prometheus |
+| Comunicacao Dupla | WebSocket em tempo real + REST polling como fallback |
 
 ---
 
-## Arquitetura do Sistema
+## Arquitetura
 
+O sistema opera com **exposicao direta de servicos** — sem proxy reverso. O backend FastAPI e o frontend React sao acessados diretamente nas suas respectivas portas.
+
+```text
+                    ┌──────────────────────┐
+                    │   Dashboard React    │
+                    │    (porta 3000)      │
+                    └──────────┬───────────┘
+                               │ REST + WebSocket
+                               ▼
+┌──────────┐        ┌──────────────────────┐
+│ Android  │◄──────►│   FastAPI Backend    │
+│  Agent   │  HTTP  │    (porta 8200)      │
+│  (APK)   │  + WS  └──────────┬───────────┘
+└──────────┘                   │
+                    ┌──────────┴───────────┐
+                    │                      │
+              ┌─────▼─────┐         ┌──────▼─────┐
+              │PostgreSQL │         │   Redis    │
+              │  (5432)   │         │   (6379)   │
+              └───────────┘         └────────────┘
 ```
-┌──────────────┐     ┌──────────────────────────┐     ┌──────────────────┐
-│   Android    │◄───►│     Nginx Reverse Proxy   │◄───►│  React Dashboard │
-│   Agent      │     │  TLS · WS Upgrade · LB    │     │  (Vite + TS)     │
-│   (Kotlin)   │     └────────────┬──────────────┘     └──────────────────┘
-└──────────────┘                  │
-                      ┌───────────▼───────────┐
-                      │    FastAPI Backend     │
-                      │  Serviços · Watchdogs  │
-                      └───┬──────────────┬────┘
-                          │              │
-                    ┌─────▼───┐    ┌─────▼────┐    ┌──────────────────┐
-                    │Postgres │    │  Redis   │    │ Google Play      │
-                    │   DB    │    │  Cache   │    │ Integrity API    │
-                    └─────────┘    └──────────┘    └──────────────────┘
-```
+
+**Nota:** Nao ha Nginx ou qualquer proxy reverso na stack. O backend (Uvicorn) e exposto diretamente na porta `8200` do host, e o frontend (Vite/serve) na porta `3000`.
 
 ---
 
-## Documentação por Módulo
+## Documentacao por Modulo
 
-| Módulo | README | Descrição |
+| Modulo | README | Descricao |
 |---|---|---|
-| **Backend** | [`backend/README.md`](backend/README.md) | API, serviços, watchdogs, modelos de dados |
-| **Frontend** | [`frontend/README.md`](frontend/README.md) | Dashboard, hooks WebSocket, componentes |
-| **Android Agent** | [`android/README.md`](android/README.md) | State machine, DPM, segurança, comandos |
+| Backend | [`backend/README.md`](backend/README.md) | API, servicos, watchdogs, seguranca e modelos |
+| Frontend | [`frontend/README.md`](frontend/README.md) | Dashboard, hooks WebSocket e componentes |
+| Android Agent | [`android/README.md`](android/README.md) | Foreground service, state machine, DPM e comandos |
+
+### Documentacao Adicional
+
+| Documento | Descricao |
+|---|---|
+| [`docs/instalando_apk.md`](docs/instalando_apk.md) | Guia de instalacao do APK via ADB |
+| [`docs/RBAC_IMPLEMENTATION.md`](docs/RBAC_IMPLEMENTATION.md) | Arquitetura do sistema RBAC |
+| [`docs/android-management-api.md`](docs/android-management-api.md) | Integracao com AMAPI do Google |
 
 ---
 
-## Início Rápido
+## Inicio Rapido
+
+### Pre-requisitos
+
+- Docker e Docker Compose instalados
+- Porta `8200`, `3000`, `5432` e `6379` livres no host
+
+### Subindo o ambiente
 
 ```bash
 # 1. Clone e configure
 git clone https://github.com/oblivius321/MDM_PROJECT_ELION.git
 cd MDM_PROJECT_ELION
-cp .env.example .env  # Preencha com valores seguros
+cp .env.example .env
+# Edite o .env com suas senhas e IP do servidor
 
 # 2. Suba a stack
 docker compose up -d
 
-# 3. Crie o usuário admin
-docker compose exec backend python -m backend.create_admin
-
-# 4. Acesse
-#    Dashboard  → http://localhost
-#    API Docs   → http://localhost:8000/docs
-#    Métricas   → http://localhost:8000/metrics
+# 3. Acesse
+#    Dashboard  -> http://<SEU_IP>:3000
+#    API Docs   -> http://<SEU_IP>:8200/docs
+#    Metricas   -> http://<SEU_IP>:8200/metrics
 ```
 
-> Para deploy em produção, veja [Deploy em Produção](#deploy-em-produção) abaixo.
+> Para deploy em producao, use `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`.
 
 ---
 
 ## Infraestrutura
 
-| Serviço | Porta | Função |
-|---|---|---|
-| **Nginx** | `:80` | Terminação TLS, upgrade WS, proxy reverso |
-| **Backend** | `:8000` | FastAPI + Uvicorn (atrás do Nginx) |
-| **Frontend** | `:3000` | Servidor dev Vite (atrás do Nginx) |
-| **PostgreSQL** | `:5432` | Armazenamento primário de dados |
-| **Redis** | `:6379` | Anti-replay de nonces, cache de vereditos, rate limiting |
+| Servico | Container | Porta Host | Funcao |
+|---|---|---|---|
+| Backend | `elion-mdm-backend` | `8200` | FastAPI + Uvicorn (exposto diretamente, sem proxy) |
+| Frontend | `elion-mdm-frontend` | `3000` | Dashboard React/Vite |
+| PostgreSQL | `elion-mdm-postgres` | `5432` | Armazenamento primario |
+| Redis | `elion-mdm-redis` | `6379` | Cache, anti-replay, rate limiting e tokens de enrollment |
+
+> **Sem Nginx:** Todos os servicos sao acessados diretamente nas portas listadas. O backend mapeia a porta interna `8000` para `8200` no host via Docker.
 
 ---
 
-## Deploy em Produção
+## Variaveis de Ambiente Importantes
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+| Variavel | Proposito |
+|---|---|
+| `SECRET_KEY` | Assinatura JWT |
+| `BOOTSTRAP_SECRET` | Segredo de enrollment (usado pelo agente Android) |
+| `DB_PASSWORD` | Senha do PostgreSQL |
+| `API_URL` | URL publica do backend (ex: `http://192.168.25.227:8200`) |
+| `ALLOWED_ORIGINS` | Lista explicita de origens CORS (sem wildcard em producao) |
+| `DEFAULT_ADMIN_PASSWORD` | Senha do admin padrao criado na inicializacao |
+
+> Veja [`.env.example`](.env.example) para a referencia completa e [`.env.production.example`](.env.production.example) para producao.
+
+---
+
+## Fluxo de Enrollment (ADB Manual)
+
+O enrollment atual utiliza **instalacao manual via ADB** com Bootstrap Secret:
+
+```text
+1. Admin gera o Bootstrap Secret no .env
+2. Instala o APK no dispositivo via ADB:
+   adb install -r elion-mdm.apk
+3. Abre o app e insere:
+   - URL do backend (ex: http://192.168.25.227:8200)
+   - Bootstrap Secret
+4. O agente registra o dispositivo e inicia o servico de telemetria
+5. O dispositivo aparece no dashboard automaticamente
 ```
 
-**Variáveis de ambiente obrigatórias em produção:**
-
-| Variável | Propósito |
-|---|---|
-| `SECRET_KEY` | Assinatura JWT (32+ caracteres) |
-| `BOOTSTRAP_SECRET` | Segredo de enrollment de dispositivos |
-| `ATTESTATION_SECRET` | Chave HMAC para nonces |
-| `DB_PASSWORD` | Senha do PostgreSQL |
-| `ALLOWED_ORIGINS` | Origins CORS explícitas (sem wildcard) |
-
-> Gere segredos com: `python -c "import secrets; print(secrets.token_urlsafe(32))"`
+> Para detalhes completos, veja [`docs/instalando_apk.md`](docs/instalando_apk.md).
 
 ---
 
 ## Roadmap
 
 ### Capacidades Atuais
-- Integração de Enrollment Oficial Google Android Management API (AMAPI)
-- Arquitetura de Comandos Stateful com polling assíncrono (Google Operations API)
-- Acompanhamento de latência de execução de comandos em tempo real
-- Enforcement determinístico de políticas com drift detection
-- Atestação de hardware via Play Integrity API
-- Compliance scoring com enforcement automático
-- Pipeline DevSecOps CI/CD (Bandit, Trivy, pip-audit)
+- Enrollment manual via ADB com Bootstrap Secret
+- Telemetria rica (bateria, GPS, apps, armazenamento, foreground app)
+- Pipeline de comandos assincronos com ciclo de vida stateful
+- Enforcement de politicas com drift detection
+- Atestacao de hardware via Play Integrity
+- Compliance scoring com enforcement automatico
+- RBAC com roles e permissoes granulares
+- Comunicacao dupla: WebSocket + REST polling
 
 ### Em Progresso
 - Isolamento multi-tenant SaaS
 
-### Roadmap Futuro
-- Orquestração Kubernetes (EKS/GKE)
-- Agente iOS (Swift)
-- Dashboards de observabilidade Grafana + Loki
+
+### Futuro
+- Orquestracao Kubernetes
+- Observabilidade com Grafana + Loki
 - Suporte Work Profile (BYOD)
+- Enrollment via QR Code (Device Owner)
 
 ---
 
-## Licença
+## Licenca
 
-Proprietário — Todos os direitos reservados.
-
-<p align="center">
-  <sub>Desenvolvido por matheus · MDM Enterprise · Arquitetura Zero Trust</sub>
-</p>
+Proprietario. Todos os direitos reservados.

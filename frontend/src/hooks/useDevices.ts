@@ -119,7 +119,16 @@ export function useDevice(id: string) {
           deviceService.getTelemetry(id),
           deviceService.getCommands(id)
         ]);
-        setTelemetry(telRes.data);
+        
+        // Normalização: A API retorna um array de telemetria (histórico).
+        // Extraímos o registro mais recente (índice 0) para o estado atual.
+        const telemetryData = telRes.data;
+        if (Array.isArray(telemetryData)) {
+          setTelemetry(telemetryData.length > 0 ? telemetryData[0] : null);
+        } else {
+          setTelemetry(telemetryData || null);
+        }
+
         setCommands(cmdRes.data);
       } catch (e) {
         console.error("Failed to fetch telemetry or commands", e);

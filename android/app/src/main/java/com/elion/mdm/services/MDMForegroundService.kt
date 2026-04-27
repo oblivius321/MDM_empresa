@@ -98,8 +98,19 @@ class MDMForegroundService : Service() {
         com.elion.mdm.system.LocalLogger.init(this)
 
         createNotificationChannel()
-        startForeground(NOTIF_ID, buildNotification("Serviço em execução..."))
-        Log.i(TAG, "MDMForegroundService criado — Modo Enterprise 3B")
+        
+        // Android 14+ exige o tipo do serviço no startForeground
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                NOTIF_ID, 
+                buildNotification("Proteção MDM Ativa"), 
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            )
+        } else {
+            startForeground(NOTIF_ID, buildNotification("Proteção MDM Ativa"))
+        }
+
+        Log.i(TAG, "MDMForegroundService iniciado - DeviceID: ${prefs.deviceId}, URL: ${prefs.backendUrl}")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -137,6 +148,9 @@ class MDMForegroundService : Service() {
                     com.elion.mdm.domain.MdmState.KIOSK_ACTIVE -> {
                         // Loop normal de manutenção
                         performCheckin()
+                        if (state == com.elion.mdm.domain.MdmState.ENROLLED) {
+                            runEnforcement()
+                        }
                         
                         // Atestação de Hardware
                         attestationService.performAttestation().onFailure {
@@ -243,26 +257,121 @@ class MDMForegroundService : Service() {
     }
 
     private suspend fun performCheckin() {
-        val api      = ApiClient.getInstance(this)
-        val deviceId = prefs.deviceId ?: return
+        val baseUrl = com.elion.mdm.data.remote.ApiClient.normalizeRootUrl(prefs.backendUrl)
+        Log.i(TAG, "🚀 [CHECKIN] Iniciando envio para: $baseUrl")
+        
+        val deviceId = prefs.deviceId
+        if (deviceId.isNullOrBlank()) {
+            Log.e(TAG, "❌ [CHECKIN] Cancelado: Device ID nulo ou vazio")
+            return
+        }
+
+        try {
+        // ─── Coleta de Telemetria Rica ──────────────────────────────────────
+        
+        // Bateria e carregamento
+        val batteryStatus: android.content.Intent? = android.content.IntentFilter(
+            android.content.Intent.ACTION_BATTERY_CHANGED
+        ).let { ifilter -> registerReceiver(null, ifilter) }
+
+        val batteryLevel = batteryStatus?.let { intent ->
+            val level = intent.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1)
+            val scale = intent.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1)
+            if (scale > 0) (level * 100 / scale.toFloat()).toInt() else getBatteryLevel()
+        } ?: getBatteryLevel()
+
+        val isCharging = batteryStatus?.let { intent ->
+            val status = intent.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1)
+            status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
+                status == android.os.BatteryManager.BATTERY_STATUS_FULL
+        } ?: false
+
+        // Armazenamento livre
+        val freeDiskMb: Int? = try {
+            val stat = android.os.StatFs(android.os.Environment.getDataDirectory().path)
+            (stat.availableBytes / (1024 * 1024)).toInt()
+        } catch (e: Exception) {
+            Log.w(TAG, "Falha ao obter espaço em disco: ${e.message}")
+            null
+        }
+
+        // Apps instalados (package names)
+        val installedApps: List<String>? = try {
+            val flags = android.content.pm.PackageManager.GET_META_DATA
+            val packages = packageManager.getInstalledPackages(flags)
+            Log.i(TAG, "Check-in: Encontrados ${packages.size} apps instalados")
+            packages.map { it.packageName }.sorted()
+        } catch (e: Exception) {
+            Log.w(TAG, "Falha ao listar apps: ${e.message}")
+            null
+        }
+
+        // GPS (última localização conhecida — requer permissão)
+        var latitude: Double? = null
+        var longitude: Double? = null
+        try {
+            if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED ||
+                checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION)
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                val locationManager = getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+                val location = locationManager.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER)
+                    ?: locationManager.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER)
+                if (location != null) {
+                    latitude = location.latitude
+                    longitude = location.longitude
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Falha ao obter GPS: ${e.message}")
+        }
+
+        // App em foreground (fallback seguro)
+        var foregroundApp: String? = null
+        try {
+            val usm = getSystemService(Context.USAGE_STATS_SERVICE) as? android.app.usage.UsageStatsManager
+            if (usm != null) {
+                val end = System.currentTimeMillis()
+                val begin = end - 60_000 // último minuto
+                val stats = usm.queryUsageStats(android.app.usage.UsageStatsManager.INTERVAL_DAILY, begin, end)
+                foregroundApp = stats?.maxByOrNull { it.lastTimeUsed }?.packageName
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Falha ao obter foreground app: ${e.message}")
+        }
+
+        // ─── Construção e envio do request ──────────────────────────────────
 
         val request = CheckinRequest(
-            batteryLevel     = getBatteryLevel(),
+            batteryLevel     = batteryLevel,
+            isCharging       = isCharging,
             deviceModel      = "${Build.MANUFACTURER} ${Build.MODEL}",
             androidVersion   = Build.VERSION.RELEASE,
-            complianceStatus = if (dpmHelper.isDeviceOwner()) "compliant" else "non_compliant"
+            imei             = dpmHelper.getImei() ?: "Aguardando Device Owner",
+            serial           = dpmHelper.getSerialNumber() ?: Build.SERIAL,
+            complianceStatus = if (dpmHelper.isDeviceOwner()) "compliant" else "non_compliant",
+            freeDiskSpaceMb  = freeDiskMb,
+            installedApps    = installedApps,
+            latitude         = latitude,
+            longitude        = longitude,
+            foregroundApp    = foregroundApp
         )
-
+        
+        val api = ApiClient.getInstance(this)
+        Log.d(TAG, "📦 [JSON] Enviando para /checkin: ${Gson().toJson(request)}")
         val response = api.checkin(deviceId, request)
         if (response.isSuccessful) {
             prefs.lastSyncTimestamp = System.currentTimeMillis()
             response.body()?.checkinInterval?.let {
                 if (it > 0) prefs.checkinIntervalSeconds = it
             }
-            Log.i(TAG, "Check-in OK — battery=${request.batteryLevel}%")
+            Log.i(TAG, "Check-in OK — battery=${request.batteryLevel}% charging=${isCharging} disk=${freeDiskMb}MB apps=${installedApps?.size ?: 0} gps=${latitude != null}")
             updateNotification("Último sync: ${formatTime(prefs.lastSyncTimestamp)}")
         } else {
             Log.w(TAG, "Check-in HTTP ${response.code()}")
+        }
+        } catch (e: Exception) {
+            Log.e(TAG, "Erro crítico no performCheckin: ${e.message}")
         }
     }
 

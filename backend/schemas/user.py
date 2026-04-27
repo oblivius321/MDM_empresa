@@ -121,6 +121,10 @@ class DeviceEnrollRequest(BaseModel):
     device_type: str = Field(..., min_length=1, max_length=50)
     bootstrap_token: str  # Token dinâmico gerado pelo backend (TTL + uso único)
     profile_id: Optional[uuid.UUID] = None  # Opcional — backend resolve via token
+    device_model: Optional[str] = None
+    android_version: Optional[str] = None
+    imei: Optional[str] = None
+    installed_apps: Optional[List[str]] = None
     extra_data: Optional[dict] = None
 
 

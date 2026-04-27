@@ -12,6 +12,10 @@ import com.elion.mdm.services.MDMForegroundService
 
 object DevMode {
     private const val TAG = "MDM_DEV_MODE"
+    private const val LAUNCH_TOAST_MIN_INTERVAL_MS = 10_000L
+    private const val SAFE_LAUNCH_MESSAGE =
+        "DEV MODE: soft kiosk ativo; bloqueios criticos foram pulados"
+    private var lastLaunchToastAt = 0L
 
     fun isDevMode(): Boolean = BuildConfig.IS_DEV
 
@@ -32,12 +36,26 @@ object DevMode {
     }
 
     fun blockDangerousPolicy(actionName: String) {
-        Log.w(TAG, "Blocked dangerous policy in DEV build: $actionName")
+        Log.w(TAG, "Skipped hard-lock policy in DEV build: $actionName")
+    }
+
+    fun softKioskSummary(): String =
+        "DEV soft-kiosk: Lock Task, app hiding and mobile-network lockdown stay disabled"
+
+    fun safeLaunchMessage(): String = SAFE_LAUNCH_MESSAGE
+
+    fun shouldShowLaunchToast(): Boolean {
+        val now = System.currentTimeMillis()
+        if (now - lastLaunchToastAt < LAUNCH_TOAST_MIN_INTERVAL_MS) {
+            return false
+        }
+        lastLaunchToastAt = now
+        return true
     }
 
     fun showLaunchToast(context: Context) {
-        if (!isDevMode()) return
-        showToast(context, "DEV MODE: dangerous policies blocked")
+        if (!isDevMode() || !shouldShowLaunchToast()) return
+        showToast(context, SAFE_LAUNCH_MESSAGE)
     }
 
     fun emergencyExit(context: Context) {

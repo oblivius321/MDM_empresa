@@ -26,6 +26,7 @@ class PolicyManager(
     fun applyFullPolicy(policy: BootstrapResponse): List<String> {
         val failedSteps = mutableListOf<String>()
         Log.i(TAG, "Aplicando politica version=${policy.policyVersion}, kiosk=${policy.kioskEnabled}")
+        val effectiveAllowedApps = resolveAllowedApps(policy.allowedApps, policy.config)
 
         try {
             if (!applySecurityPolicies(policy.config)) {
@@ -36,12 +37,12 @@ class PolicyManager(
                 failedSteps.add("DEVICE_RESTRICTIONS")
             }
 
-            if (!applyAppPolicies(policy.allowedApps, policy.config)) {
+            if (!applyAppPolicies(effectiveAllowedApps, policy.config)) {
                 failedSteps.add("APP_POLICIES")
             }
 
             if (policy.kioskEnabled) {
-                if (!enableKioskMode(policy.allowedApps)) {
+                if (!enableKioskMode(effectiveAllowedApps)) {
                     failedSteps.add("KIOSK_MODE")
                 }
             } else {
@@ -106,6 +107,7 @@ class PolicyManager(
             val array = JSONArray()
             allowedApps.distinct().forEach { array.put(it) }
             prefs.allowedAppsJson = array.toString()
+            prefs.kioskTargetPackage = readKioskTargetPackage(config)
 
             val blockedApps = stringList(config["blocked_apps"]).distinct()
             val previousBlockedApps = try {
@@ -133,6 +135,23 @@ class PolicyManager(
         }
     }
 
+    private fun resolveAllowedApps(
+        allowedApps: List<String>,
+        config: Map<String, Any>
+    ): List<String> {
+        val targetPackage = readKioskTargetPackage(config)
+        val merged = allowedApps
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .toMutableList()
+
+        if (!targetPackage.isNullOrBlank() && !merged.contains(targetPackage)) {
+            merged.add(targetPackage)
+        }
+
+        return merged.distinct()
+    }
+
     private fun enableKioskMode(allowedApps: List<String>): Boolean {
         return try {
             kioskManager.enableKiosk(allowedApps)
@@ -156,6 +175,20 @@ class PolicyManager(
             is List<*> -> value.mapNotNull { it as? String }.filter { it.isNotBlank() }
             is Array<*> -> value.mapNotNull { it as? String }.filter { it.isNotBlank() }
             else -> emptyList()
+        }
+    }
+
+    private fun readKioskTargetPackage(config: Map<String, Any>): String? {
+        val kiosk = config["kiosk"] as? Map<*, *>
+        val settings = config["config"] as? Map<*, *>
+
+        return listOfNotNull(
+            kiosk?.get("package_name"),
+            kiosk?.get("package"),
+            config["kiosk_package"],
+            settings?.get("kiosk_package")
+        ).firstNotNullOfOrNull { value ->
+            value?.toString()?.trim()?.takeIf { it.isNotBlank() }
         }
     }
 }

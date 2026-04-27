@@ -84,10 +84,16 @@ class AdminLoginActivity : AppCompatActivity() {
 
             when (result) {
                 is AdminAuthManager.AuthResult.Success -> {
-                    // Sucesso — abrir painel admin
+                    // Sucesso — action específica ou painel admin?
                     hideError()
-                    startActivity(Intent(this@AdminLoginActivity, AdminPanelActivity::class.java))
-                    finish()
+                    val action = intent.getStringExtra("EXTRA_ACTION")
+                    if (action == "ACTION_APP_SELECTION") {
+                        setResult(android.app.Activity.RESULT_OK)
+                        finish()
+                    } else {
+                        startActivity(Intent(this@AdminLoginActivity, AdminPanelActivity::class.java))
+                        finish()
+                    }
                 }
 
                 is AdminAuthManager.AuthResult.Failed -> {

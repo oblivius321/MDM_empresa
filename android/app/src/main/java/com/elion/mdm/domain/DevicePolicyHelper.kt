@@ -28,9 +28,42 @@ class DevicePolicyHelper(private val context: Context) {
 
     // ─── Verificações ─────────────────────────────────────────────────────────
 
-    fun isDeviceOwner(): Boolean = dpm.isDeviceOwnerApp(context.packageName)
+    fun isDeviceOwner(): Boolean = runCatching {
+        dpm.isDeviceOwnerApp(context.packageName)
+    }.getOrDefault(false)
 
-    fun isDeviceAdmin(): Boolean = dpm.isAdminActive(admin)
+    /**
+     * Tenta obter o IMEI. Requer Device Owner no Android 10+.
+     */
+    fun getImei(): String? = runCatching {
+        if (isDeviceOwner()) {
+            val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as android.telephony.TelephonyManager
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                tm.imei ?: tm.deviceId
+            } else {
+                @Suppress("DEPRECATION")
+                tm.deviceId
+            }
+        } else {
+            null
+        }
+    }.getOrNull()
+
+    /**
+     * Tenta obter o Serial Number. Requer Device Owner no Android 10+.
+     */
+    fun getSerialNumber(): String? = runCatching {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            if (isDeviceOwner()) android.os.Build.getSerial() else null
+        } else {
+            @Suppress("DEPRECATION")
+            android.os.Build.SERIAL
+        }
+    }.getOrNull()
+
+    fun isDeviceAdmin(): Boolean = runCatching {
+        dpm.isAdminActive(admin)
+    }.getOrDefault(false)
 
     private fun checkDO(action: String): Boolean {
         return isDeviceOwner().also {
@@ -84,7 +117,9 @@ class DevicePolicyHelper(private val context: Context) {
         Log.i(TAG, "setCameraDisabled($disabled)")
     }
 
-    fun isCameraDisabled(): Boolean = dpm.getCameraDisabled(admin)
+    fun isCameraDisabled(): Boolean = runCatching {
+        if (isDeviceAdmin()) dpm.getCameraDisabled(admin) else false
+    }.getOrDefault(false)
 
     // ─── Status Bar ───────────────────────────────────────────────────────────
 
@@ -147,10 +182,10 @@ class DevicePolicyHelper(private val context: Context) {
         Log.i(TAG, "setLockTaskFeatures($features)")
     }
 
-    fun isInLockTaskMode(): Boolean {
+    fun isInLockTaskMode(): Boolean = runCatching {
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        return am.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
-    }
+        am.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
+    }.getOrDefault(false)
 
     // ─── Screen Timeout ───────────────────────────────────────────────────────
 
@@ -299,6 +334,12 @@ class DevicePolicyHelper(private val context: Context) {
         check(checkDO("reboot")) { "Não é Device Owner" }
         dpm.reboot(admin)
         Log.i(TAG, "reboot() solicitado")
+    }
+
+    fun removeDeviceOwner(): Result<Unit> = runCatching {
+        check(checkDO("removeDeviceOwner")) { "Nao e Device Owner" }
+        Log.w(TAG, "clearDeviceOwnerApp(${context.packageName})")
+        dpm.clearDeviceOwnerApp(context.packageName)
     }
 
     // ─── Apply Full Policy ────────────────────────────────────────────────────

@@ -1,0 +1,42 @@
+*.iml
+.gradle/
+build/
+.idea/
+.kotlin/
+captures/
+.externalNativeBuild/
+.cxx/
+local.properties
+
+# Gradle metadata and caches
+gradle/caches/
+gradle/daemon/
+gradle/native/
+gradle/kotlin-profile/
+gradle/.tmp/
+gradle/wrapper/dists/
+
+# Global junk
+**/caches/
+**/dists/
+**/daemon/
+**/kotlin-profile/
+**/*.tmp/
+**/build/
+**/.gradle/
+**/java_pid*.hprof
+
+# Keystores (HIGHLY SENSITIVE)
+keystores/
+*.jks
+*.keystore
+
+# Google Services
+google-services.json
+
+# Large dumps
+*.hprof
+
+# Built logs
+build_log.txt
+gradle_output*.txt

@@ -17,10 +17,11 @@ from backend.schemas.policy import (
     PolicyConfigUpdate,
     PolicyConfigResponse,
     DevicePolicyAssign,
-    DevicePolicyResponse,
+    DevicePolicyAssignmentResponse,
     ComplianceStatusResponse,
     DeviceStateReport,
 )
+from backend.utils.decorators import require_permission
 
 import logging
 
@@ -37,6 +38,11 @@ async def create_policy(
     data: PolicyConfigCreate,
     current_user: User = Depends(get_current_user),
 ):
+    # Security Bypass for Admin
+    if not current_user.is_admin:
+        from backend.utils.decorators import PermissionChecker
+        checker = PermissionChecker(current_user)
+        checker.assert_permission("policies:create")
     """
     Cria uma nova policy enterprise com config JSON flexível.
     """
@@ -84,6 +90,11 @@ async def list_policies(
     is_active: Optional[bool] = None,
     current_user: User = Depends(get_current_user),
 ):
+    # Security Bypass for Admin
+    if not current_user.is_admin:
+        from backend.utils.decorators import PermissionChecker
+        checker = PermissionChecker(current_user)
+        checker.assert_permission("policies:read")
     """Lista policies enterprise com filtros opcionais."""
     from backend.core.database import async_session_maker
     from backend.models.policy import Policy
@@ -106,6 +117,11 @@ async def get_policy(
     policy_id: int,
     current_user: User = Depends(get_current_user),
 ):
+    # Security Bypass for Admin
+    if not current_user.is_admin:
+        from backend.utils.decorators import PermissionChecker
+        checker = PermissionChecker(current_user)
+        checker.assert_permission("policies:read")
     """Retorna uma policy específica."""
     from backend.core.database import async_session_maker
     from backend.models.policy import Policy
@@ -127,6 +143,11 @@ async def update_policy(
     data: PolicyConfigUpdate,
     current_user: User = Depends(get_current_user),
 ):
+    # Security Bypass for Admin
+    if not current_user.is_admin:
+        from backend.utils.decorators import PermissionChecker
+        checker = PermissionChecker(current_user)
+        checker.assert_permission("policies:update")
     """
     Atualiza uma policy. Incrementa version automaticamente.
     Isso invalida caches e força re-enforcement nos devices vinculados.
@@ -168,7 +189,8 @@ async def update_policy(
         # P2.0 Hardening: SET version = version + 1 RETURNING version
         new_version = await repo.increment_policy_version(policy_id)
         policy.version = new_version
-        policy.updated_at = datetime.now(timezone.utc)
+        from backend.core import utcnow
+        policy.updated_at = utcnow()
 
         await db.commit()
         await db.refresh(policy)
@@ -193,9 +215,14 @@ async def delete_policy(
     policy_id: int,
     current_user: User = Depends(get_current_user),
 ):
+    # Security Bypass for Admin
+    if not current_user.is_admin:
+        from backend.utils.decorators import PermissionChecker
+        checker = PermissionChecker(current_user)
+        checker.assert_permission("policies:delete")
     """Remove definitivamente uma policy se ela nao estiver vinculada a profiles."""
     from backend.core.database import async_session_maker
-    from backend.models.policy import Policy, ProvisioningProfile, ProvisioningProfilePolicy
+    from backend.models.policy import DevicePolicyAssignment, Policy, ProvisioningProfile, ProvisioningProfilePolicy
     from backend.repositories.device_repo import DeviceRepository
     from sqlalchemy.future import select
 
@@ -221,6 +248,21 @@ async def delete_policy(
             raise HTTPException(
                 status_code=409,
                 detail=f"Política em uso pelos perfis: {', '.join(profile_names)}",
+            )
+
+        assignment_result = await db.execute(
+            select(DevicePolicyAssignment.device_id)
+            .where(DevicePolicyAssignment.policy_id == policy_id)
+            .order_by(DevicePolicyAssignment.device_id.asc())
+        )
+        assigned_device_ids = list(dict.fromkeys(assignment_result.scalars().all()))
+        if assigned_device_ids:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "PolÃ­tica atribuÃ­da diretamente aos dispositivos: "
+                    + ", ".join(assigned_device_ids)
+                ),
             )
 
         policy_snapshot = {
@@ -251,22 +293,34 @@ async def delete_policy(
 
 @router.post(
     "/devices/{device_id}/policies/v2",
-    response_model=DevicePolicyResponse,
+    response_model=DevicePolicyAssignmentResponse,
 )
 async def assign_policy_to_device(
     device_id: str,
     data: DevicePolicyAssign,
     current_user: User = Depends(get_current_user),
 ):
+    # Security Bypass for Admin
+    if not current_user.is_admin:
+        from backend.utils.decorators import PermissionChecker
+        checker = PermissionChecker(current_user)
+        checker.assert_permission("policies:apply")
     """
     Atribui uma policy a um device. Trigger imediato de compliance check.
     """
     from backend.core.database import async_session_maker
-    from backend.models.policy import DevicePolicy, Policy
+    from backend.models.device import Device
+    from backend.models.policy import DevicePolicyAssignment, Policy
     from sqlalchemy.future import select
     from sqlalchemy import and_
 
     async with async_session_maker() as db:
+        device = await db.execute(
+            select(Device.device_id).where(Device.device_id == device_id)
+        )
+        if not device.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Device not found")
+
         # Verifica se a policy existe
         policy = await db.execute(
             select(Policy).where(Policy.id == data.policy_id)
@@ -276,17 +330,17 @@ async def assign_policy_to_device(
 
         # Verifica duplicata
         existing = await db.execute(
-            select(DevicePolicy).where(
+            select(DevicePolicyAssignment).where(
                 and_(
-                    DevicePolicy.device_id == device_id,
-                    DevicePolicy.policy_id == data.policy_id,
+                    DevicePolicyAssignment.device_id == device_id,
+                    DevicePolicyAssignment.policy_id == data.policy_id,
                 )
             )
         )
         if existing.scalar_one_or_none():
             raise HTTPException(status_code=409, detail="Policy already assigned")
 
-        dp = DevicePolicy(
+        dp = DevicePolicyAssignment(
             device_id=device_id,
             policy_id=data.policy_id,
             issued_by=current_user.email,
@@ -315,16 +369,21 @@ async def list_device_policies(
     device_id: str,
     current_user: User = Depends(get_current_user),
 ):
+    # Security Bypass for Admin
+    if not current_user.is_admin:
+        from backend.utils.decorators import PermissionChecker
+        checker = PermissionChecker(current_user)
+        checker.assert_permission("policies:read")
     """Lista todas as policies atribuídas a um device."""
     from backend.core.database import async_session_maker
-    from backend.models.policy import DevicePolicy, Policy
+    from backend.models.policy import DevicePolicyAssignment, Policy
     from sqlalchemy.future import select
 
     async with async_session_maker() as db:
         result = await db.execute(
             select(Policy)
-            .join(DevicePolicy, DevicePolicy.policy_id == Policy.id)
-            .where(DevicePolicy.device_id == device_id)
+            .join(DevicePolicyAssignment, DevicePolicyAssignment.policy_id == Policy.id)
+            .where(DevicePolicyAssignment.device_id == device_id)
             .order_by(Policy.priority.desc())
         )
         return result.scalars().all()
@@ -336,18 +395,23 @@ async def unassign_policy_from_device(
     policy_id: int,
     current_user: User = Depends(get_current_user),
 ):
+    # Security Bypass for Admin
+    if not current_user.is_admin:
+        from backend.utils.decorators import PermissionChecker
+        checker = PermissionChecker(current_user)
+        checker.assert_permission("policies:apply")
     """Remove atribuição de policy de um device."""
     from backend.core.database import async_session_maker
-    from backend.models.policy import DevicePolicy
+    from backend.models.policy import DevicePolicyAssignment
     from sqlalchemy.future import select
     from sqlalchemy import and_
 
     async with async_session_maker() as db:
         result = await db.execute(
-            select(DevicePolicy).where(
+            select(DevicePolicyAssignment).where(
                 and_(
-                    DevicePolicy.device_id == device_id,
-                    DevicePolicy.policy_id == policy_id,
+                    DevicePolicyAssignment.device_id == device_id,
+                    DevicePolicyAssignment.policy_id == policy_id,
                 )
             )
         )
@@ -402,9 +466,6 @@ async def preview_profile_merged_policy(
     from backend.services.policy_engine import merge_policies, compute_hash
 
     # Security Hardening: Admin access only
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Acesso restrito a administradores.")
-
     async with async_session_maker() as db:
         repo = DeviceRepository(db)
         
@@ -502,12 +563,23 @@ async def _trigger_re_enforcement(policy_id: int) -> None:
     os devices vinculados. Desbloqueia failed_loop se a versão mudou.
     """
     from backend.core.database import async_session_maker
-    from backend.models.policy import DevicePolicy, PolicyState
+    from backend.models.policy import DevicePolicy, DevicePolicyAssignment, PolicyState, ProvisioningProfilePolicy
     from sqlalchemy.future import select
+    from sqlalchemy import union
 
     async with async_session_maker() as db:
         result = await db.execute(
-            select(DevicePolicy.device_id).where(DevicePolicy.policy_id == policy_id)
+            union(
+                select(DevicePolicy.device_id)
+                .join(
+                    ProvisioningProfilePolicy,
+                    ProvisioningProfilePolicy.profile_id == DevicePolicy.profile_id,
+                )
+                .where(ProvisioningProfilePolicy.policy_id == policy_id),
+                select(DevicePolicyAssignment.device_id).where(
+                    DevicePolicyAssignment.policy_id == policy_id
+                ),
+            )
         )
         device_ids = [row[0] for row in result.all()]
 

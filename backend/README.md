@@ -17,6 +17,8 @@
 
 O backend é o sistema nervoso central do Elion MDM. Ele gerencia enrollment de dispositivos, computação de políticas, despacho de comandos, avaliação de compliance, atestação de hardware e comunicação em tempo real — tudo através de uma arquitetura assíncrona e não-bloqueante.
 
+**O backend é exposto diretamente via Uvicorn na porta `8200` do host (mapeada de `8000` internamente no Docker), sem necessidade de Nginx ou proxy reverso.**
+
 ---
 
 ## Estrutura de Diretórios
@@ -27,7 +29,7 @@ backend/
 ├── api/
 │   ├── routes.py               # API principal (devices, enrollment, atestação)
 │   ├── auth.py                 # Autenticação JWT (login/registro de usuários)
-│   ├── device_auth.py          # Validação de token do dispositivo
+│   ├── device_auth.py          # Validação de token opaco do dispositivo (SHA-256)
 │   ├── websockets.py           # Gerenciador de conexões WebSocket
 │   ├── websocket_routes.py     # Endpoints WS (canais device + dashboard)
 │   ├── command_dispatcher.py   # Motor idempotente de despacho de comandos
@@ -65,12 +67,12 @@ backend/
 
 | Método | Responsabilidade |
 |---|---|
-| `enroll_device()` | Enrollment atômico: valida profile → gera token → materializa política |
+| `enroll_device()` | Enrollment atômico: valida profile → gera token → materializa política → salva telemetria inicial |
 | `get_bootstrap_data()` | Retorna o SSOT completo (Single Source of Truth) para provisionamento |
+| `process_checkin()` | Processa check-in de telemetria (bateria, GPS, apps, armazenamento) |
 | `sync_policy()` | Handshake de comparação de hash para drift detection |
 | `enqueue_command()` | Adiciona comando à fila idempotente com trilha de auditoria |
 | `ack_command()` | Processa o ciclo de 4 estágios: ACK → EXECUTED → VERIFIED |
-| `verify_command_execution()` | Prova de Execução via cross-check de telemetria |
 | `calculate_compliance_score()` | Motor ponderado: Kiosk(40) + Segurança(30) + Apps(20) + Integridade(10) |
 
 ### `AttestationService` — Trust de Hardware
@@ -112,22 +114,6 @@ Três watchdogs concorrentes garantem a resiliência do sistema:
 | **Presença** | 30s | Marca dispositivos offline se heartbeat > 65s |
 | **Timeout de Comandos** | 15s | Retry com backoff exponencial, DLQ após max_retries |
 | **Compliance** | 5min | Reavalia devices sem check de compliance > 1 hora |
-| **AMAPI Poller** | 15s | Monitora operações long-running no Google (PENDING → DISPATCHED → EXECUTED/FAILED) e computa latência. Alerta após 3 min stall. |
-
----
-
-## Ciclo de Vida de Comandos (Stateful AMAPI)
-
-Comandos para dispositivos gerenciados via infraestrutura do Google agora seguem o rastreio rigoroso stateful via HTTP Long-Running Operations:
-
-```
-PENDING ──► DISPATCHED ──► EXECUTED / FAILED
-```
-- **DISPATCHED**: Payload assíncrono emitido via `MDMService._route_command_to_amapi` que recupera a `operation_name`. 
-- **EXECUTED**: Confirmado pelo `amapi_operation_poller` periodicamente contendo tempo de submissão e tempo de resposta, originando o KPI de **Latência de Execução** em formato decimal de tempo.
-- **ALERTA STALL**: Em 3 minutos preso no Google, um registro dinâmico no payload salva a integridade do worker e envia a Warning Cloud Metrics. Timeout Hard falha a operação de forma segura em 24h.
-
-> Para a implementação do lado Android do tratamento de comandos, veja o [README do Android Agent](../android/README.md).
 
 ---
 
@@ -144,36 +130,47 @@ PENDING ──► DISPATCHED ──► EXECUTED / FAILED
 
 | Endpoint | Método | Auth | Descrição |
 |---|---|---|---|
-| `/api/android-management/enrollment-token` | POST | Admin JWT | Enrollment Android Enterprise oficial |
+| `/api/enroll` | POST | Bootstrap Secret | Enrollment do dispositivo Android |
 | `/api/devices` | GET | JWT | Listar todos os dispositivos |
+| `/api/devices/summary` | GET | JWT | Contadores (online, offline, locked) |
 | `/api/devices/{id}` | GET | JWT | Detalhes do dispositivo |
-| `/api/devices/{id}/bootstrap` | GET | Token Device | Download do SSOT |
-| `/api/devices/{id}/status` | POST | Token Device | Report de saúde |
-| `/api/devices/{id}/policy/sync` | POST | Token Device | Handshake de drift detection |
-| `/api/devices/{id}/commands` | GET | Token Device | Histórico de todas as operações emitidas |
-| `/api/devices/{id}/commands/pending` | GET | Token Device | Buscar comandos pendentes |
-| `/api/devices/{id}/commands/{cmd_id}/ack` | POST | Token Device | Confirmar execução |
-| `/api/devices/{id}/commands` | POST | JWT | Criar comando remoto na fila |
+| `/api/devices/{id}` | DELETE | JWT (Admin) | Remover dispositivo |
+| `/api/devices/{id}/bootstrap` | GET | X-Device-Token | Download do SSOT |
+| `/api/devices/{id}/status` | POST | X-Device-Token | Report de saúde |
+| `/api/devices/{id}/telemetry` | GET | JWT | Dados de telemetria |
+| `/api/devices/{id}/policy/sync` | POST | X-Device-Token | Handshake de drift detection |
+| `/api/devices/{id}/commands` | GET | JWT | Histórico de todas as operações |
+| `/api/devices/{id}/commands/pending` | GET | X-Device-Token | Buscar comandos pendentes |
+| `/api/devices/{id}/commands/{cmd_id}/ack` | POST | X-Device-Token | Confirmar execução |
+| `/api/devices/{id}/commands` | POST | JWT (Admin) | Criar comando remoto na fila |
+| `/api/devices/{id}/lock` | POST | JWT (Admin) | Bloquear dispositivo |
+| `/api/devices/{id}/reboot` | POST | JWT (Admin) | Reiniciar dispositivo |
+| `/api/devices/{id}/wipe` | POST | JWT (Admin) | Factory reset |
+| `/api/checkin` | POST | X-Device-Token | Check-in de telemetria periódico |
 
 ### Trust e Atestação
 
 | Endpoint | Método | Auth | Descrição |
 |---|---|---|---|
-| `/api/devices/nonce` | GET | Token Device | Gerar nonce assinado |
-| `/api/devices/attest` | POST | Token Device | Verificar integridade de hardware |
+| `/api/devices/nonce` | GET | X-Device-Token | Gerar nonce assinado |
+| `/api/devices/attest` | POST | X-Device-Token | Verificar integridade de hardware |
 
 ### WebSocket
 
 | Endpoint | Protocolo | Descrição |
 |---|---|---|
-| `/api/ws/device?token=` | WS | Canal device ↔ backend em tempo real |
+| `/api/ws/device/{device_id}` | WS | Canal device ↔ backend em tempo real |
 | `/api/ws/dashboard?token=` | WS | Canal de broadcast para dashboard |
 
-> Documentação interativa completa disponível em `/docs` (Swagger UI) com o servidor rodando.
+> Documentação interativa completa disponível em `http://<IP>:8200/docs` (Swagger UI) com o servidor rodando.
 
 ---
 
 ## Arquitetura de Segurança
+
+### Autenticação de Dispositivos
+
+Os dispositivos se autenticam via **token opaco** (não JWT). O token é gerado no enrollment e armazenado como hash SHA-256 no banco. O dispositivo envia o token no header `X-Device-Token` em cada requisição.
 
 ### Schemas de Dados do Redis
 
@@ -192,7 +189,6 @@ PENDING ──► DISPATCHED ──► EXECUTED / FAILED
 | Binding | HMAC-SHA256 | Nonce vinculado a device + tenant + request |
 | Clock Skew | ±60 segundos | Tolerância para dessincronização de relógio |
 | Cache Stampede | Jitter TTL | TTL ± random(0–2min) previne thundering herd |
-| Invalidação Ativa | On CRITICAL | Cache de veredito purgado quando device viola compliance |
 | CORS | Origins explícitas | Sem wildcard em produção |
 | Rate Limiting | SlowAPI | 5 req/min no endpoint de enrollment |
 | Escalação de Privilégios | Serviço RBAC | Admin não pode criar Super Admin |
@@ -213,21 +209,19 @@ PENDING ──► DISPATCHED ──► EXECUTED / FAILED
 | `mdm_policy_apply_total` | Counter | Taxa de sucesso de aplicação de políticas |
 | `mdm_device_health_score` | Gauge | Último Compliance Score reportado |
 | `mdm_commands_inflight` | Gauge | Comandos pendentes do estado VERIFIED |
-| `mdm_policy_failure_rate` | Counter | Rastreamento de error budget |
 
 ---
 
 ## Setup Local
 
 ```bash
-# A partir da raiz do projeto
-pip install -r requirements.txt
-
-# Executar diretamente (desenvolvimento)
-uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
-
-# Ou via Docker
+# Via Docker (recomendado)
 docker compose up backend -d
+# → API disponível em http://localhost:8200
+
+# Ou diretamente (desenvolvimento sem Docker)
+pip install -r requirements.txt
+uvicorn backend.main:app --host 0.0.0.0 --port 8200 --reload
 ```
 
 ### Variáveis de Ambiente
@@ -237,8 +231,10 @@ docker compose up backend -d
 | `DATABASE_URL` | ✅ | String de conexão AsyncPG |
 | `SECRET_KEY` | ✅ | Chave de assinatura JWT |
 | `BOOTSTRAP_SECRET` | ✅ | Autenticação de enrollment |
-| `ATTESTATION_SECRET` | ✅ | Assinatura HMAC de nonces |
-| `REDIS_HOST` | ○ | Hostname do Redis (padrão: `localhost`) |
+| `DB_PASSWORD` | ✅ | Senha do PostgreSQL |
+| `REDIS_HOST` | ○ | Hostname do Redis (padrão: `redis` no Docker) |
 | `ENVIRONMENT` | ○ | `development` / `production` |
+| `API_URL` | ○ | URL pública do backend (ex: `http://192.168.25.227:8200`) |
+| `ALLOWED_ORIGINS` | ○ (✅ prod) | Origins CORS permitidas |
 
 > Veja [`.env.example`](../.env.example) para a referência completa.

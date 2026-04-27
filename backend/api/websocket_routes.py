@@ -57,6 +57,11 @@ async def websocket_dashboard(websocket: WebSocket):
     try:
         if not token:
             raise JWTError("Token ausente nos cookies.")
+        
+        unverified_header = jwt.get_unverified_header(token)
+        if unverified_header.get("alg") != ALGORITHM:
+            raise JWTError("Invalid token algorithm")
+            
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email: str = payload.get("sub")
         if not email:

@@ -99,12 +99,62 @@ class MDMWorker(
         val api      = ApiClient.getInstance(applicationContext)
         val dpm      = DevicePolicyHelper(applicationContext)
         val deviceId = prefs.deviceId ?: return
+        val ctx      = applicationContext
+
+        // Bateria e carregamento
+        val batteryStatus: android.content.Intent? = android.content.IntentFilter(
+            android.content.Intent.ACTION_BATTERY_CHANGED
+        ).let { ifilter -> ctx.registerReceiver(null, ifilter) }
+
+        val batteryLevel = batteryStatus?.let { intent ->
+            val level = intent.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1)
+            val scale = intent.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1)
+            if (scale > 0) (level * 100 / scale.toFloat()).toInt() else getBatteryLevel()
+        } ?: getBatteryLevel()
+
+        val isCharging = batteryStatus?.let { intent ->
+            val status = intent.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1)
+            status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
+                status == android.os.BatteryManager.BATTERY_STATUS_FULL
+        } ?: false
+
+        // Armazenamento livre
+        val freeDiskMb: Int? = try {
+            val stat = android.os.StatFs(android.os.Environment.getDataDirectory().path)
+            (stat.availableBytes / (1024 * 1024)).toInt()
+        } catch (e: Exception) { null }
+
+        // Apps instalados
+        val installedApps: List<String>? = try {
+            ctx.packageManager.getInstalledPackages(0).map { it.packageName }.sorted()
+        } catch (e: Exception) { null }
+
+        // GPS
+        var latitude: Double? = null
+        var longitude: Double? = null
+        try {
+            if (ctx.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED ||
+                ctx.checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION)
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+                val loc = lm.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER)
+                    ?: lm.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER)
+                latitude = loc?.latitude
+                longitude = loc?.longitude
+            }
+        } catch (_: Exception) {}
 
         val request = CheckinRequest(
-            batteryLevel     = getBatteryLevel(),
+            batteryLevel     = batteryLevel,
+            isCharging       = isCharging,
             deviceModel      = "${Build.MANUFACTURER} ${Build.MODEL}",
             androidVersion   = Build.VERSION.RELEASE,
-            complianceStatus = if (dpm.isDeviceOwner()) "compliant" else "non_compliant"
+            complianceStatus = if (dpm.isDeviceOwner()) "compliant" else "non_compliant",
+            freeDiskSpaceMb  = freeDiskMb,
+            installedApps    = installedApps,
+            latitude         = latitude,
+            longitude        = longitude
         )
 
         val response = api.checkin(deviceId, request)
@@ -113,7 +163,7 @@ class MDMWorker(
             response.body()?.checkinInterval?.let {
                 if (it > 0) prefs.checkinIntervalSeconds = it
             }
-            Log.i(TAG, "Check-in OK via Worker")
+            Log.i(TAG, "Check-in OK via Worker — battery=${batteryLevel}% apps=${installedApps?.size ?: 0}")
         } else {
             error("Check-in HTTP ${response.code()}")
         }

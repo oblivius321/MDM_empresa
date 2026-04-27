@@ -1,6 +1,8 @@
 package com.elion.mdm.data.local
 
 import android.content.Context
+import android.content.SharedPreferences
+import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
@@ -16,6 +18,7 @@ import androidx.security.crypto.MasterKey
 class SecurePreferences(context: Context) {
 
     companion object {
+        private const val TAG                  = "ElionSecurePrefs"
         private const val FILE_NAME            = "elion_mdm_secure_prefs"
 
         // ─── MDM Agent Keys ──────────────────────────────────────────
@@ -32,6 +35,7 @@ class SecurePreferences(context: Context) {
         private const val KEY_KIOSK_ENABLED       = "kiosk_enabled"
         private const val KEY_ALLOWED_APPS        = "kiosk_allowed_apps"       // JSON array
         private const val KEY_BLOCKED_APPS        = "kiosk_blocked_apps"       // JSON array
+        private const val KEY_KIOSK_TARGET_PACKAGE = "kiosk_target_package"
         private const val KEY_ADMIN_PASSWORD_HASH = "admin_password_hash"      // bcrypt hash
         private const val KEY_ADMIN_EMAIL         = "admin_email"
         private const val KEY_LOGIN_ATTEMPTS      = "login_attempts"
@@ -40,15 +44,35 @@ class SecurePreferences(context: Context) {
         private const val KEY_SESSION_EXPIRY       = "admin_session_expiry_ms"
     }
 
-    private val prefs = EncryptedSharedPreferences.create(
-        context,
-        FILE_NAME,
-        MasterKey.Builder(context)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build(),
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-    )
+    private val prefs: SharedPreferences = createEncryptedPreferences(context.applicationContext)
+
+    private fun createEncryptedPreferences(context: Context): SharedPreferences {
+        return runCatching {
+            buildValidatedEncryptedPreferences(context)
+        }.getOrElse { firstError ->
+            Log.w(TAG, "SecurePreferences corrompidas; recriando storage local.", firstError)
+            context.deleteSharedPreferences(FILE_NAME)
+            buildValidatedEncryptedPreferences(context)
+        }
+    }
+
+    private fun buildValidatedEncryptedPreferences(context: Context): SharedPreferences {
+        return buildEncryptedPreferences(context).also { encryptedPrefs ->
+            encryptedPrefs.all
+        }
+    }
+
+    private fun buildEncryptedPreferences(context: Context): SharedPreferences {
+        return EncryptedSharedPreferences.create(
+            context,
+            FILE_NAME,
+            MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build(),
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+    }
 
     // ─── MDM Agent ────────────────────────────────────────────────────────────
 
@@ -150,6 +174,10 @@ class SecurePreferences(context: Context) {
     var blockedAppsJson: String
         get() = prefs.getString(KEY_BLOCKED_APPS, "[]") ?: "[]"
         set(v) = prefs.edit().putString(KEY_BLOCKED_APPS, v).apply()
+
+    var kioskTargetPackage: String?
+        get() = prefs.getString(KEY_KIOSK_TARGET_PACKAGE, null)
+        set(v) = prefs.edit().putString(KEY_KIOSK_TARGET_PACKAGE, v).apply()
 
     var adminPasswordHash: String?
         get() = prefs.getString(KEY_ADMIN_PASSWORD_HASH, null)

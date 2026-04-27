@@ -110,6 +110,7 @@ class DeviceRepository:
 
         for table_name in (
             "policy_states",
+            "device_policy_assignments",
             "device_policies",
             "command_queue",
             "device_telemetry",
@@ -431,15 +432,23 @@ class DeviceRepository:
 
     async def add_telemetry(self, device_id: str, payload_data: dict):
         from backend.models.telemetry import DeviceTelemetry
+        
+        # Mapeamento flexível (Suporta camelCase do Android e snake_case do Backend)
+        battery = payload_data.get("batteryLevel") or payload_data.get("battery_level")
+        charging = payload_data.get("isCharging") or payload_data.get("is_charging")
+        disk = payload_data.get("freeDiskMb") or payload_data.get("free_disk_space_mb") or payload_data.get("freeDiskSpaceMb")
+        apps = payload_data.get("installedApps") or payload_data.get("installed_apps") or []
+        fg_app = payload_data.get("foregroundApp") or payload_data.get("foreground_app")
+
         telemetry = DeviceTelemetry(
             device_id=device_id,
-            battery_level=payload_data.get("battery_level"),
-            is_charging=payload_data.get("is_charging"),
-            free_disk_space_mb=payload_data.get("free_disk_space_mb"),
-            installed_apps=payload_data.get("installed_apps", []),
+            battery_level=int(battery) if battery is not None else None,
+            is_charging=bool(charging) if charging is not None else None,
+            free_disk_space_mb=int(disk) if disk is not None else None,
+            installed_apps=apps if isinstance(apps, list) else [],
             latitude=payload_data.get("latitude"),
             longitude=payload_data.get("longitude"),
-            foreground_app=payload_data.get("foreground_app"),
+            foreground_app=fg_app,
             daily_usage_stats=payload_data.get("daily_usage_stats", {})
         )
         self.db.add(telemetry)

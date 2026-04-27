@@ -1,12 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- activity_admin_panel.xml — Painel de controle administrativo -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:background="#0D1117">
 
-    <!-- ─── Top Bar ──────────────────────────────────── -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="56dp"
@@ -20,7 +18,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="⚙ Painel Administrativo"
+            android:text="Painel Administrativo"
             android:textColor="#FFFFFF"
             android:textSize="17sp"
             android:textStyle="bold"/>
@@ -39,11 +37,12 @@
         android:layout_height="1dp"
         android:background="#21262D"/>
 
-    <!-- ─── Conteúdo Scrollable ───────────────────────── -->
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
+        android:clipToPadding="false"
+        android:fillViewport="true"
         android:padding="16dp">
 
         <LinearLayout
@@ -51,24 +50,23 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
-            <!-- Ativar/Desativar Modo Kiosk -->
             <LinearLayout
                 android:id="@+id/btn_toggle_kiosk"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:padding="16dp"
                 android:layout_marginBottom="8dp"
-                android:background="#161B22">
+                android:background="#161B22"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="16dp">
 
                 <TextView
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="🔒  Ativar/Desativar Modo Kiosk"
+                    android:text="Ativar/Desativar Modo Kiosk"
                     android:textColor="#C9D1D9"
-                    android:textSize="14sp"/>
+                    android:textSize="14sp" />
 
                 <TextView
                     android:id="@+id/tv_kiosk_status"
@@ -77,72 +75,69 @@
                     android:text="ATIVO"
                     android:textColor="#3FB950"
                     android:textSize="12sp"
-                    android:textStyle="bold"/>
+                    android:textStyle="bold" />
             </LinearLayout>
 
-            <!-- Configurações de Wi-Fi -->
             <LinearLayout
                 android:id="@+id/btn_wifi"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:padding="16dp"
                 android:layout_marginBottom="8dp"
-                android:background="#161B22">
+                android:background="#161B22"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="16dp">
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="📶  Configurações de Wi-Fi"
+                    android:text="Configuracoes de Wi-Fi"
                     android:textColor="#C9D1D9"
-                    android:textSize="14sp"/>
+                    android:textSize="14sp" />
             </LinearLayout>
 
-            <!-- Controle de Volume -->
             <LinearLayout
                 android:id="@+id/btn_volume"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp"
                 android:layout_marginBottom="8dp"
-                android:background="#161B22">
+                android:background="#161B22"
+                android:orientation="vertical"
+                android:padding="16dp">
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="🔊  Controle de Volume"
+                    android:layout_marginBottom="8dp"
+                    android:text="Controle de Volume"
                     android:textColor="#C9D1D9"
-                    android:textSize="14sp"
-                    android:layout_marginBottom="8dp"/>
+                    android:textSize="14sp" />
 
                 <SeekBar
                     android:id="@+id/seekbar_volume"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:max="100"
-                    android:progress="50"/>
+                    android:progress="50" />
             </LinearLayout>
 
-            <!-- Bloquear Barra de Status -->
             <LinearLayout
                 android:id="@+id/btn_status_bar"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:padding="16dp"
                 android:layout_marginBottom="8dp"
-                android:background="#161B22">
+                android:background="#161B22"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="16dp">
 
                 <TextView
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="🚫  Bloquear Barra de Status"
+                    android:text="Bloquear Barra de Status"
                     android:textColor="#C9D1D9"
-                    android:textSize="14sp"/>
+                    android:textSize="14sp" />
 
                 <TextView
                     android:id="@+id/tv_status_bar_state"
@@ -151,27 +146,26 @@
                     android:text="BLOQUEADA"
                     android:textColor="#3FB950"
                     android:textSize="12sp"
-                    android:textStyle="bold"/>
+                    android:textStyle="bold" />
             </LinearLayout>
 
-            <!-- Gerenciar Aplicativos Permitidos -->
             <LinearLayout
                 android:id="@+id/btn_manage_apps"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:padding="16dp"
                 android:layout_marginBottom="8dp"
-                android:background="#161B22">
+                android:background="#161B22"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="16dp">
 
                 <TextView
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="📱  Gerenciar Aplicativos Permitidos"
+                    android:text="Gerenciar Aplicativos Permitidos"
                     android:textColor="#C9D1D9"
-                    android:textSize="14sp"/>
+                    android:textSize="14sp" />
 
                 <TextView
                     android:id="@+id/tv_app_count"
@@ -179,72 +173,86 @@
                     android:layout_height="wrap_content"
                     android:text="0 apps"
                     android:textColor="#8B949E"
-                    android:textSize="12sp"/>
+                    android:textSize="12sp" />
             </LinearLayout>
 
-            <!-- Sincronizar com Servidor -->
             <LinearLayout
                 android:id="@+id/btn_sync"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:padding="16dp"
                 android:layout_marginBottom="8dp"
-                android:background="#161B22">
+                android:background="#161B22"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="16dp">
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="🔄  Sincronizar com Servidor"
+                    android:text="Sincronizar com Servidor"
                     android:textColor="#C9D1D9"
-                    android:textSize="14sp"/>
+                    android:textSize="14sp" />
             </LinearLayout>
 
-            <!-- Informações do Dispositivo -->
             <LinearLayout
                 android:id="@+id/btn_device_info"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp"
                 android:layout_marginBottom="8dp"
-                android:background="#161B22">
+                android:background="#161B22"
+                android:orientation="vertical"
+                android:padding="16dp">
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="ℹ️  Informações do Dispositivo"
+                    android:layout_marginBottom="8dp"
+                    android:text="Informacoes do Dispositivo"
                     android:textColor="#C9D1D9"
-                    android:textSize="14sp"
-                    android:layout_marginBottom="8dp"/>
+                    android:textSize="14sp" />
 
                 <TextView
                     android:id="@+id/tv_device_info"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
                     android:textColor="#8B949E"
                     android:textSize="11sp"
-                    android:fontFamily="monospace"
-                    android:visibility="gone"/>
+                    android:visibility="gone" />
             </LinearLayout>
         </LinearLayout>
     </ScrollView>
 
-    <!-- ─── Botão Sair do Kiosk ───────────────────────── -->
     <View
         android:layout_width="match_parent"
         android:layout_height="1dp"
         android:background="#21262D"/>
 
-    <Button
-        android:id="@+id/btn_exit_kiosk"
+    <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="52dp"
-        android:layout_margin="16dp"
-        android:text="🚪 Sair do modo Kiosk"
-        android:textColor="#FFFFFF"
-        android:textAllCaps="false"
-        android:textStyle="bold"
-        android:backgroundTint="#DA3633"/>
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <Button
+            android:id="@+id/btn_remove_device_owner"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginBottom="12dp"
+            android:backgroundTint="#F85149"
+            android:text="Remover Device Owner"
+            android:textColor="#FFFFFF"
+            android:textAllCaps="false"
+            android:textStyle="bold"/>
+
+        <Button
+            android:id="@+id/btn_exit_kiosk"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:backgroundTint="#DA3633"
+            android:text="Sair do modo Kiosk"
+            android:textColor="#FFFFFF"
+            android:textAllCaps="false"
+            android:textStyle="bold"/>
+    </LinearLayout>
 </LinearLayout>

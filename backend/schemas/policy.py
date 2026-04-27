@@ -139,6 +139,16 @@ class PolicyConfigResponse(BaseModel):
 class DevicePolicyAssign(BaseModel):
     policy_id: int
 
+
+class DevicePolicyAssignmentResponse(BaseModel):
+    id: int
+    device_id: str
+    policy_id: int
+    issued_by: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
 class ComplianceStatusResponse(BaseModel):
     device_id: str
     status: str

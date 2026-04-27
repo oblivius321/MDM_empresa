@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from backend.core.database import get_db
 from backend.schemas.user import (
@@ -15,11 +16,42 @@ from backend.core.constants import SecurityQuestion
 from datetime import timedelta, datetime
 from fastapi.security import OAuth2PasswordBearer
 import os
+import logging
 from backend.core.limiter import limiter
 
 # ── DEFINIÇÃO DO ROUTER (SEM PREFIXO LOCAL) ────────────
 router = APIRouter(tags=["Autenticação"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
+logger = logging.getLogger("mdm.auth")
+DEFAULT_ADMIN_EMAIL = os.getenv("DEFAULT_ADMIN_EMAIL", "admin@empresa.com").strip().lower()
+LEGACY_ADMIN_EMAIL_ALIASES = {
+    DEFAULT_ADMIN_EMAIL,
+    "admin@empresa.com",
+    "admin@elion.com.br",
+}
+
+
+async def resolve_login_user(repo: UserRepository, db: AsyncSession, email: str) -> User | None:
+    normalized_email = email.strip().lower()
+    user = await repo.get_by_email(normalized_email)
+    if user is not None:
+        return user
+
+    if normalized_email not in LEGACY_ADMIN_EMAIL_ALIASES:
+        return None
+
+    fallback_emails = [alias for alias in LEGACY_ADMIN_EMAIL_ALIASES if alias != normalized_email]
+    result = await db.execute(
+        select(User).where(User.email.in_(fallback_emails), User.is_admin.is_(True))
+    )
+    fallback_user = result.scalars().first()
+    if fallback_user is not None:
+        logger.warning(
+            "Admin login alias fallback used: requested=%s resolved=%s",
+            normalized_email,
+            fallback_user.email,
+        )
+    return fallback_user
 
 # Middleware-like function for auth
 async def get_current_user(
@@ -76,7 +108,7 @@ async def get_security_questions():
 @limiter.limit("5/minute")
 async def login(request: Request, response: Response, credentials: UserLogin, db: AsyncSession = Depends(get_db)):
     repo = UserRepository(db)
-    user = await repo.get_by_email(credentials.email)
+    user = await resolve_login_user(repo, db, credentials.email)
     
     if not user or not verify_password(credentials.password, user.hashed_password):
         raise HTTPException(

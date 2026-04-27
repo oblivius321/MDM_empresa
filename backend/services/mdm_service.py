@@ -1,5 +1,6 @@
 import uuid
 import logging
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from backend.repositories.device_repo import DeviceRepository
 from backend.models.device import Device
@@ -109,15 +110,28 @@ class MDMService:
             "device_type": device_type,
             "status": "online",
             "is_active": True,
-            "api_key_hash": token_hash
+            "api_key_hash": token_hash,
+            "last_checkin": datetime.utcnow()
         }
         
-        metadata = {}
-        for k, v in kwargs.items():
-            if k in valid_columns:
-                device_data[k] = v
-            else:
-                metadata[k] = v
+        # Mapeamento flexível de campos técnicos (IMEI/Serial, Model, Apps e Empresa)
+        # Sanitização inclusa para garantir integridade e normalização de nomes (Fase 3 Enterprise)
+        imei = kwargs.get("imei") or kwargs.get("serial")
+        model = kwargs.get("device_model") or kwargs.get("model")
+        apps = kwargs.get("installed_apps") or kwargs.get("apps")
+        company = kwargs.get("company") or kwargs.get("organization") or kwargs.get("empresa")
+        
+        if imei: device_data["imei"] = str(imei).strip()
+        if model: device_data["model"] = str(model).strip()
+        if apps: device_data["last_apps_json"] = apps if isinstance(apps, list) else []
+        if company: device_data["company"] = str(company).strip()
+
+        # Telemetria Inicial
+        if kwargs.get("battery_level"): device_data["battery_level"] = int(kwargs["battery_level"])
+        if kwargs.get("free_disk_space_mb"): device_data["free_disk_space_mb"] = int(kwargs["free_disk_space_mb"])
+        if kwargs.get("latitude"): device_data["latitude"] = float(kwargs["latitude"])
+        if kwargs.get("longitude"): device_data["longitude"] = float(kwargs["longitude"])
+
         device_data["metadata_json"] = metadata
 
         from backend.services.policy_engine import (
@@ -292,7 +306,48 @@ class MDMService:
     async def process_checkin(self, device_id: str, payload: dict):
         """Atualiza batimento cardíaco e telemetria profunda."""
         from datetime import datetime
-        await self.repo.update_device(device_id, {"last_checkin": datetime.utcnow(), "status": "online"})
+        import json
+        logger.info(f"📥 [CHECKIN DEBUG] Device: {device_id} | Payload: {json.dumps(payload)}")
+        
+        # Dados para atualizar no cadastro principal do Device
+        device_updates = {
+            "last_checkin": datetime.utcnow(),
+            "status": "online"
+        }
+        
+        # Mapeia campos identificadores se vierem no checkin (Suporta CamelCase do Android e snake_case do Backend)
+        if payload:
+            # Model
+            model = payload.get("model") or payload.get("device_model")
+            if model: device_updates["model"] = model
+            
+            # Android Version
+            version = payload.get("androidVersion") or payload.get("android_version")
+            if version: device_updates["android_version"] = version
+            
+            # IMEI
+            imei = payload.get("imei")
+            if imei: device_updates["imei"] = imei
+            
+            # Apps
+            apps = payload.get("installedApps") or payload.get("installed_apps")
+            if apps: device_updates["last_apps_json"] = apps
+
+            # Telemetria Real-time
+            battery = payload.get("batteryLevel") or payload.get("battery_level")
+            if battery is not None: device_updates["battery_level"] = int(battery)
+            
+            disk = payload.get("freeDiskMb") or payload.get("free_disk_space_mb")
+            if disk is not None: device_updates["free_disk_space_mb"] = int(disk)
+            
+            lat = payload.get("latitude")
+            if lat is not None: device_updates["latitude"] = float(lat)
+            
+            lng = payload.get("longitude")
+            if lng is not None: device_updates["longitude"] = float(lng)
+            
+        await self.repo.update_device(device_id, device_updates)
+        
         if payload:
             await self.repo.add_telemetry(device_id, payload)
 

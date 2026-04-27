@@ -43,6 +43,9 @@ def decode_token(token: str) -> Optional[dict]:
     Raises JWTError se token é inválido ou expirado.
     """
     try:
+        unverified_header = jwt.get_unverified_header(token)
+        if unverified_header.get("alg") != ALGORITHM:
+            raise JWTError("Invalid token algorithm")
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload
     except JWTError:

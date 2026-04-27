@@ -24,6 +24,47 @@ from backend.utils.logging_config import setup_logging
 from backend.middleware.observability import ObservabilityMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 
+async def ensure_default_admin(async_session):
+    from sqlalchemy import select
+    from backend.core.security import get_password_hash
+    from backend.models.user import User
+
+    logger = logging.getLogger("mdm.bootstrap")
+    admin_email = os.getenv("DEFAULT_ADMIN_EMAIL", "admin@empresa.com").strip().lower()
+    admin_password = os.getenv("DEFAULT_ADMIN_PASSWORD", "AdminSenhaForte123!")
+    admin_aliases = {
+        admin_email,
+        "admin@empresa.com",
+        "admin@elion.com.br",
+    }
+
+    result = await async_session.execute(
+        select(User).where(User.email.in_(admin_aliases), User.is_admin.is_(True))
+    )
+    admin_user = result.scalars().first()
+
+    if admin_user is None:
+        admin_user = User(
+            email=admin_email,
+            hashed_password=get_password_hash(admin_password),
+            is_admin=True,
+            is_active=True,
+        )
+        async_session.add(admin_user)
+        logger.warning("Default admin created at startup: %s", admin_email)
+        return
+
+    if admin_user.email != admin_email:
+        logger.warning(
+            "Legacy admin email retained for compatibility: current=%s configured=%s",
+            admin_user.email,
+            admin_email,
+        )
+    admin_user.is_admin = True
+    admin_user.is_active = True
+    admin_user.hashed_password = get_password_hash(admin_password)
+    logger.info("Default admin credentials synchronized from environment for %s", admin_user.email)
+
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
@@ -36,10 +77,13 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         async_session = AsyncSession(engine)
         try:
+            await ensure_default_admin(async_session)
             rbac_service = RBACService(async_session)
             await rbac_service.initialize_rbac()
+            await async_session.commit()
             print("✅ RBAC system initialized")
         except Exception as e:
+            await async_session.rollback()
             print(f"⚠️  RBAC initialization: {e}")
         finally:
             await async_session.close()
@@ -137,9 +181,9 @@ async def lifespan(app: FastAPI):
         import logging
         from datetime import datetime, timezone, timedelta
         from backend.core.database import async_session_maker
-        from backend.models.policy import DevicePolicy, PolicyState
+        from backend.models.policy import DevicePolicy, DevicePolicyAssignment, PolicyState
         from sqlalchemy.future import select
-        from sqlalchemy import distinct
+        from sqlalchemy import union
 
         cw_logger = logging.getLogger("compliance_watchdog")
         CHECK_INTERVAL = 300  # 5 minutos
@@ -151,11 +195,15 @@ async def lifespan(app: FastAPI):
                 async with async_session_maker() as db:
                     # Busca devices com policies atribuídas
                     result = await db.execute(
-                        select(distinct(DevicePolicy.device_id))
+                        union(
+                            select(DevicePolicy.device_id),
+                            select(DevicePolicyAssignment.device_id),
+                        )
                     )
                     device_ids = [row[0] for row in result.all()]
 
-                    now = datetime.now(timezone.utc)
+                    from backend.core import utcnow
+                    now = utcnow()
                     for did in device_ids:
                         # Verifica se precisa re-checar
                         state_result = await db.execute(
@@ -255,16 +303,15 @@ if environment == "production":
 else:
     # 🟡 DESENVOLVIMENTO: Origins locais apenas (sem permissão wildcard)
     allowed_origins = [
-        "http://192.168.25.227",           # Nginx reverse proxy (porta 80)
-        "http://192.168.25.227:8080",      # Nginx porta alternativa
         "http://192.168.25.227:5173",      # Vite dev server
         "http://192.168.25.227:3000",      # Frontend container
-        "http://192.168.25.227:8000",      # Backend (para testes)
-        "http://127.0.0.1",          # Nginx via IP (porta 80)
-        "http://127.0.0.1:8080",     # Nginx via IP porta alternativa
+        "http://192.168.25.227:8200",      # Backend exposto no host
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://localhost:8200",
         "http://127.0.0.1:5173",
         "http://127.0.0.1:3000",
-        "http://127.0.0.1:8000",
+        "http://127.0.0.1:8200",
     ]
     allowed_hosts = ["*"] # Em desenvolvimento, permitimos qualquer host
 

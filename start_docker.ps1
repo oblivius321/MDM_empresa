@@ -104,10 +104,9 @@ Write-Host "[OK] Containers iniciados`n" -ForegroundColor Green
 # ── URLs ─────────────────────────────────
 Write-Host "`n[3/3] Ambiente iniciado! Acesse:" -ForegroundColor Yellow
 Write-Host "========================================`n"
-Write-Host "  Frontend (Vite dev):   http://localhost:3000" -ForegroundColor Cyan
-Write-Host "  Frontend (Nginx):      http://localhost" -ForegroundColor Cyan
-Write-Host "  Backend API:           http://localhost/api" -ForegroundColor Cyan
-Write-Host "  API Docs (Swagger):    http://localhost/api/docs" -ForegroundColor Cyan
+Write-Host "  Frontend:              http://localhost:3000" -ForegroundColor Cyan
+Write-Host "  Backend API:           http://localhost:8200" -ForegroundColor Cyan
+Write-Host "  API Docs (Swagger):    http://localhost:8200/docs" -ForegroundColor Cyan
 Write-Host "  PostgreSQL:            localhost:5432`n" -ForegroundColor Cyan
 Write-Host "========================================`n"
 

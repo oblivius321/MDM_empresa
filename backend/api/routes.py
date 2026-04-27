@@ -25,6 +25,7 @@ from backend.api.device_auth import get_current_device
 from backend.core.limiter import limiter
 from backend.models.device import Device
 from backend.models.user import User
+from backend.utils.decorators import require_permission, require_role
 import base64
 import datetime
 import hashlib
@@ -87,11 +88,22 @@ def serialize_user_me(user: User) -> Dict:
 
 
 def serialize_audit_log(log) -> Dict:
-    action = getattr(log.action, "value", log.action)
+    # Garante que a ação seja uma string (seja Enum ou str)
+    action = getattr(log.action, "value", str(log.action))
+    
+    # Tenta obter o email de forma segura para evitar erros de LazyLoading/None
+    user_email = None
+    try:
+        # Acessa o atributo de forma a não disparar erro se o objeto não estiver carregado
+        if hasattr(log, "user") and log.user:
+            user_email = getattr(log.user, "email", None)
+    except Exception:
+        user_email = None
+
     return {
         "id": str(log.id),
         "user_id": log.user_id,
-        "user_email": log.user.email if getattr(log, "user", None) else None,
+        "user_email": user_email,
         "action": action,
         "event_type": log.event_type,
         "severity": log.severity,
@@ -162,25 +174,24 @@ async def update_current_user_preferences(
 # ============= 🛡️ CAMADA 1: CORE (Devices & Profiles) =============
 
 @router.get("/profiles", response_model=List[ProvisioningProfileResponse], tags=["SaaS Admin"])
+@require_permission("policies:read")
 async def list_profiles(
     service: MDMService = Depends(get_service),
     current_user: User = Depends(get_current_user)
 ):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Somente administrador pode gerenciar perfis globais.")
     return await service.list_profiles()
 
 @router.post("/profiles", response_model=ProvisioningProfileResponse, tags=["SaaS Admin"])
+@require_permission("policies:create")
 async def create_profile(
     profile_data: ProvisioningProfileCreate,
     service: MDMService = Depends(get_service),
     current_user: User = Depends(get_current_user)
 ):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Acesso restrito.")
     return await service.create_profile(profile_data)
 
 @router.get("/profiles/{profile_id}", response_model=ProvisioningProfileResponse, tags=["SaaS Admin"])
+@require_permission("policies:read")
 async def get_profile(
     profile_id: uuid.UUID,
     service: MDMService = Depends(get_service),
@@ -189,14 +200,13 @@ async def get_profile(
     return await service.get_profile(profile_id)
 
 @router.put("/profiles/{profile_id}", response_model=ProvisioningProfileResponse, tags=["SaaS Admin"])
+@require_permission("policies:update")
 async def update_profile(
     profile_id: uuid.UUID,
     profile_data: ProvisioningProfileUpdate,
     service: MDMService = Depends(get_service),
     current_user: User = Depends(get_current_user)
 ):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Acesso restrito.")
     return await service.update_profile(profile_id, profile_data)
 
 
@@ -204,6 +214,7 @@ async def update_profile(
 
 @router.post("/enrollment/generate", tags=["SaaS Admin"], deprecated=True)
 @limiter.limit("10/minute")
+@require_role("SUPER_ADMIN", "ADMIN")
 async def deprecated_legacy_enrollment_token(
     request: Request,
     response: Response,
@@ -225,9 +236,6 @@ async def deprecated_legacy_enrollment_token(
     response.headers["X-Deprecated"] = "true"
     enroll_logger.warning("DEPRECATED: legacy enrollment endpoint called")
     enroll_logger.error("LEGACY ENROLLMENT FLOW USED - SHOULD NOT HAPPEN")
-
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Somente administradores podem gerar tokens de enrollment.")
 
     # Validação de inputs
     if mode not in ("single", "batch"):
@@ -318,42 +326,96 @@ async def enroll_device(
     enroll_logger.warning("DEPRECATED: legacy enrollment endpoint called")
     enroll_logger.error("LEGACY ENROLLMENT FLOW USED - SHOULD NOT HAPPEN")
     try:
+        from backend.core.config import BOOTSTRAP_SECRET
+        import os
+
+        requested_profile_id = req.profile_id
+        if not requested_profile_id and req.extra_data:
+            raw_profile_id = req.extra_data.get("profile_id")
+            if raw_profile_id:
+                requested_profile_id = uuid.UUID(str(raw_profile_id))
+
         # Validar token dinâmico no Redis
         token_data = await redis.validate_enrollment_token(req.bootstrap_token)
-        
+
+        # Compatibilidade operacional para provisionamento via ADB/UI manual:
+        # permite usar a BOOTSTRAP_SECRET fixa quando houver profile_id explícito
+        # ou quando existir exatamente um profile ativo no sistema.
+        if not token_data and req.bootstrap_token == BOOTSTRAP_SECRET:
+            resolved_profile_id = requested_profile_id
+
+            if not resolved_profile_id:
+                active_profiles = [profile for profile in await service.list_profiles() if profile.is_active]
+                if len(active_profiles) == 1:
+                    resolved_profile_id = active_profiles[0].id
+                elif len(active_profiles) == 0:
+                    raise HTTPException(status_code=409, detail="Nenhum perfil ativo disponível para enrollment.")
+                else:
+                    configured_default_profile_id = os.getenv("DEFAULT_ENROLLMENT_PROFILE_ID", "").strip()
+                    default_named_profiles = [
+                        profile for profile in active_profiles
+                        if "default" in profile.name.lower() or "padrão" in profile.name.lower() or "padrao" in profile.name.lower()
+                    ]
+
+                    if configured_default_profile_id:
+                        resolved_profile_id = next(
+                            (
+                                profile.id
+                                for profile in active_profiles
+                                if str(profile.id) == configured_default_profile_id
+                            ),
+                            None,
+                        )
+
+                    if not resolved_profile_id and default_named_profiles:
+                        default_named_profiles.sort(key=lambda profile: profile.created_at, reverse=True)
+                        resolved_profile_id = default_named_profiles[0].id
+
+                    if not resolved_profile_id:
+                        active_profiles.sort(key=lambda profile: profile.created_at, reverse=True)
+                        resolved_profile_id = active_profiles[0].id
+
+                    enroll_logger.warning(
+                        f"ADB bootstrap secret auto-selected profile={resolved_profile_id} "
+                        f"for device={req.device_id} among {len(active_profiles)} active profiles"
+                    )
+
+            profile = await service.get_profile(resolved_profile_id)
+            if not profile:
+                raise HTTPException(status_code=404, detail="Perfil de provisionamento não encontrado.")
+
+            token_data = {
+                "profile_id": str(resolved_profile_id),
+                "tenant_id": "default",
+                "created_by": "system:adb_bootstrap_secret",
+                "mode": "adb_secret",
+                "used_count": 1,
+                "max_devices": 1,
+            }
+            enroll_logger.warning(
+                f"ADB bootstrap secret accepted for {req.device_id} "
+                f"(profile={resolved_profile_id}, ip={request.client.host if request.client else 'unknown'})"
+            )
+
         if not token_data:
-            import os
-            bootstrap_secret = os.getenv("BOOTSTRAP_SECRET", "pbplast123_!")
-            if req.bootstrap_token == bootstrap_secret:
-                enroll_logger.warning("Using static BOOTSTRAP_SECRET fallback for local dev")
-                # Need a profile to associate the device with
-                profiles = await service.list_profiles()
-                if not profiles:
-                    raise HTTPException(status_code=500, detail="No provisioning profiles available for legacy enrollment fallback.")
-                token_data = {
-                    "profile_id": str(profiles[0].id),
-                    "created_by": "legacy_adb_enroll",
-                    "mode": "single",
-                }
-            else:
-                enroll_logger.warning(
-                    f"🚨 Enrollment REJEITADO para {req.device_id}: "
-                    f"token inválido/expirado (IP: {request.client.host if request.client else 'unknown'})"
-                )
-                # Audit: tentativa bloqueada
-                await service.repo.log_event(
-                    event_type="ENROLLMENT_REJECTED",
-                    actor_type="device",
-                    actor_id=req.device_id,
-                    severity="WARNING",
-                    payload={
-                        "reason": "invalid_or_expired_token",
-                        "ip": request.client.host if request.client else "unknown",
-                        "user_agent": request.headers.get("user-agent", "unknown"),
-                    },
-                    request=request,
-                )
-                raise HTTPException(status_code=403, detail="Token de enrollment inválido ou expirado.")
+            enroll_logger.warning(
+                f"🚨 Enrollment REJEITADO para {req.device_id}: "
+                f"token inválido/expirado (IP: {request.client.host if request.client else 'unknown'})"
+            )
+            # Audit: tentativa bloqueada
+            await service.repo.log_event(
+                event_type="ENROLLMENT_REJECTED",
+                actor_type="device",
+                actor_id=req.device_id,
+                severity="WARNING",
+                payload={
+                    "reason": "invalid_or_expired_token",
+                    "ip": request.client.host if request.client else "unknown",
+                    "user_agent": request.headers.get("user-agent", "unknown"),
+                },
+                request=request,
+            )
+            raise HTTPException(status_code=403, detail="Token de enrollment inválido ou expirado.")
 
         # Usar o profile_id do token (backend decide, não o device)
         profile_id = uuid.UUID(token_data["profile_id"])
@@ -363,11 +425,16 @@ async def enroll_device(
         extra.pop("profile_id", None)
 
         # Realiza o enroll criando a associação com a política inicial
+        # Passa metadados enriquecidos capturados pelo agente (Fase 3 Enterprise)
         device, token = await service.enroll_device(
             device_id=req.device_id,
             name=req.name,
             device_type=req.device_type,
             profile_id=profile_id,
+            device_model=req.device_model,
+            android_version=req.android_version,
+            imei=req.imei,
+            installed_apps=req.installed_apps,
             **extra
         )
 
@@ -472,9 +539,10 @@ async def delete_device(
     service: MDMService = Depends(get_service),
     current_user: User = Depends(get_current_user),
 ):
+    # Security Bypass for Admin
     if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Somente administrador pode excluir dispositivos.")
-
+        if "devices:delete" not in getattr(current_user, "all_permissions", set()):
+            raise HTTPException(status_code=403, detail="Permissão necessária: devices:delete")
     removed = await service.remove_device(
         device_id,
         actor_id=str(current_user.email),
@@ -606,6 +674,10 @@ async def lock_device(
     service: MDMService = Depends(get_service),
     current_user: User = Depends(get_current_user),
 ):
+    # Security Bypass for Admin
+    if not current_user.is_admin:
+        if "devices:lock" not in getattr(current_user, "all_permissions", set()):
+            raise HTTPException(status_code=403, detail="Permissão necessária: devices:lock")
     return await _enqueue_dashboard_command(device_id, "LOCK", service, current_user)
 
 
@@ -615,6 +687,10 @@ async def reboot_device(
     service: MDMService = Depends(get_service),
     current_user: User = Depends(get_current_user),
 ):
+    # Security Bypass for Admin
+    if not current_user.is_admin:
+        if "devices:reboot" not in getattr(current_user, "all_permissions", set()):
+            raise HTTPException(status_code=403, detail="Permissão necessária: devices:reboot")
     return await _enqueue_dashboard_command(device_id, "REBOOT", service, current_user)
 
 
@@ -624,6 +700,10 @@ async def wipe_device(
     service: MDMService = Depends(get_service),
     current_user: User = Depends(get_current_user),
 ):
+    # Security Bypass for Admin
+    if not current_user.is_admin:
+        if "devices:wipe" not in getattr(current_user, "all_permissions", set()):
+            raise HTTPException(status_code=403, detail="Permissão necessária: devices:wipe")
     return await _enqueue_dashboard_command(device_id, "WIPE", service, current_user)
 # ============= 🛡️ CAMADA EX: TRUST & INTEGRITY (Play Integrity) =============
 
@@ -670,20 +750,27 @@ async def get_logs(
     current_user: User = Depends(get_current_user),
     service: MDMService = Depends(get_service),
 ):
+    # Security: Allow if user is admin OR has specific audit:read permission
     if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Somente administradores podem consultar logs.")
-
+        if not hasattr(current_user, "all_permissions") or "audit:read" not in current_user.all_permissions:
+            raise HTTPException(status_code=403, detail="Acesso negado: Requer permissão audit:read")
     from backend.models.audit_log import AuditLog
 
-    result = await service.repo.db.execute(
-        select(AuditLog)
-        .options(selectinload(AuditLog.user))
-        .order_by(AuditLog.created_at.desc())
-        .offset(skip)
-        .limit(limit)
-    )
-    return [serialize_audit_log(log) for log in result.scalars().all()]
+    try:
+        result = await service.repo.db.execute(
+            select(AuditLog)
+            .options(selectinload(AuditLog.user))
+            .order_by(AuditLog.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+        )
+        logs = result.scalars().all()
+        return [serialize_audit_log(log) for log in logs]
+    except Exception as e:
+        logger.error(f"❌ Erro ao buscar logs: {str(e)}")
+        raise HTTPException(status_code=500, detail="Erro interno ao carregar logs.")
 
+@router.post("/devices/{device_id}/checkin", tags=["Device Ops"])
 @router.post("/checkin", tags=["Device Ops"])
 async def checkin(
     device_id: str,
@@ -691,8 +778,9 @@ async def checkin(
     service: MDMService = Depends(get_service),
     current_device: Device = Depends(get_current_device)
 ):
+    """Handshake de telemetria rica (Bateria, GPS, Apps, Disk)"""
     if current_device.device_id != device_id:
         raise HTTPException(status_code=403, detail="Acesso negado.")
         
     await service.process_checkin(device_id, payload)
-    return {"status": "ok"}
+    return {"status": "ok", "checkin_interval": 60}

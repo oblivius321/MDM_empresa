@@ -51,19 +51,36 @@ class DeviceRepository(private val context: Context) {
                 prefs.enrollmentStatePayload?.let { json ->
                     val map = com.google.gson.Gson().fromJson(json, Map::class.java) as Map<String, Any>
                     val metadata = map["metadata"] as? Map<*, *>
-                    metadata?.get("profile_id")?.toString()
+                    metadata
+                        ?.get("profile_id")
+                        ?.toString()
+                        ?.trim()
+                        ?.takeIf { it.isNotBlank() }
                 }
             } catch (e: Exception) { null }
 
             val api     = ApiClient.getInstance(context)
+            
+            // Coleta de apps para o primeiro contato (resiliência de telemetria)
+            val apps = try {
+                context.packageManager.getInstalledPackages(android.content.pm.PackageManager.GET_META_DATA)
+                    .map { it.packageName }.sorted()
+            } catch (e: Exception) { 
+                Log.w(TAG, "Falha ao coletar apps no enrollment: ${e.message}")
+                null 
+            }
+
             val request = EnrollmentRequest(
                 deviceId        = deviceId,
                 name            = "${Build.MANUFACTURER} ${Build.MODEL}",
                 deviceType      = "android",
                 bootstrapToken  = bootstrapToken,
+                profileId       = resolvedProfileId,
+                deviceModel     = Build.MODEL,
+                androidVersion  = Build.VERSION.RELEASE,
+                imei            = null, // IMEI requer privilégios de Device Owner (pegará no checkin)
+                installedApps   = apps,
                 extraData       = mapOf(
-                    "profile_id" to (resolvedProfileId ?: ""),
-                    "android_version" to Build.VERSION.RELEASE,
                     "legacy_serial"   to (Build.SERIAL.takeIf { it != Build.UNKNOWN } ?: "UNKNOWN")
                 )
             )

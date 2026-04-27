@@ -1,5 +1,6 @@
 import { NavLink as RouterNavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import {
   LayoutDashboard,
@@ -15,7 +16,6 @@ import {
 const navItems = [
   { title: 'Dashboard', url: '/', icon: LayoutDashboard },
   { title: 'Dispositivos', url: '/devices', icon: Smartphone },
-  { title: 'Provisionamento', url: '/provisioning', icon: Box },
   { title: 'Políticas', url: '/policies', icon: Shield },
   { title: 'Logs', url: '/logs', icon: FileText },
   { title: 'Configurações', url: '/settings', icon: Settings },
@@ -25,6 +25,7 @@ export function AppSidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const { logout, user } = useAuth();
+  const { toast } = useToast();
 
   const handleLogout = async () => {
     await logout();
@@ -59,6 +60,9 @@ export function AppSidebar() {
               key={item.url}
               to={item.url}
               end={item.url === '/'}
+              onClick={() => {
+                console.log("Menu click:", item.url);
+              }}
               className={cn(
                 'flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all duration-150 group',
                 isActive ? 'sidebar-item-active' : 'sidebar-item'

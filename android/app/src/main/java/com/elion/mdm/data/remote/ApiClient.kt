@@ -105,7 +105,7 @@ object ApiClient {
 
     fun normalizeRootUrl(url: String): String {
         var normalized = url.trim()
-        if (normalized.isBlank()) return "http://localhost:8000/"
+        if (normalized.isBlank()) return "http://127.0.0.1:8200/"
         
         // Garante prefixo http
         if (!normalized.startsWith("http://") && !normalized.startsWith("https://")) {

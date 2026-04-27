@@ -55,6 +55,7 @@ android/local.properties
 *.iml
 .idea/
 .gradle/
+.gradle-home/
 captures/
 
 # Keystores (Segurança - NUNCA devem subir para o repositório público)

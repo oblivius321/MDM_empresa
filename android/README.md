@@ -2,8 +2,8 @@
   <h1 align="center">📱 Elion MDM — Android Agent</h1>
   <p align="center">
     <img src="https://img.shields.io/badge/Kotlin-1.9+-7F52FF?style=flat-square&logo=kotlin" />
-    <img src="https://img.shields.io/badge/Android-API%2028+-3DDC84?style=flat-square&logo=android" />
-    <img src="https://img.shields.io/badge/Device%20Owner-DPC-FF6F00?style=flat-square" />
+    <img src="https://img.shields.io/badge/Android-API%2030+-3DDC84?style=flat-square&logo=android" />
+    <img src="https://img.shields.io/badge/Android%2015-Compatible-3DDC84?style=flat-square" />
     <img src="https://img.shields.io/badge/Play%20Integrity-Attestation-4285F4?style=flat-square&logo=google" />
   </p>
 </p>
@@ -14,7 +14,9 @@
 
 ## Visão Geral
 
-O Android Agent é o componente de campo do Elion MDM. Roda como **Device Owner (DPC)** com um Foreground Service persistente, gerenciando o ciclo de vida completo do dispositivo — do enrollment zero-touch até a execução de comandos remotos, enforcement de políticas e compliance contínuo.
+O Android Agent é o componente de campo do Elion MDM. Roda como um Foreground Service persistente (compatível com Android 15), gerenciando o ciclo de vida completo do dispositivo — do enrollment até a execução de comandos remotos, enforcement de políticas e compliance contínuo.
+
+O agent se conecta **diretamente** ao backend FastAPI na porta `8200` — sem Nginx ou proxy reverso intermediário.
 
 ---
 
@@ -55,13 +57,13 @@ com.elion.mdm/
 │   │   └── SecurePreferences.kt   # EncryptedSharedPreferences
 │   ├── remote/
 │   │   ├── ApiService.kt          # Interface Retrofit (todos os endpoints)
-│   │   ├── ApiClient.kt           # OkHttp + Interceptors
+│   │   ├── ApiClient.kt           # OkHttp + Interceptors + URL normalizer
 │   │   └── dto/ApiModels.kt       # Data Transfer Objects
 │   └── repository/
 │       └── DeviceRepository.kt    # Camada de abstração de dados
 │
 ├── presentation/
-│   └── MainActivity.kt            # UI de enrollment (scanner QR Code)
+│   └── MainActivity.kt            # UI de enrollment + status do agent
 │
 ├── launcher/
 │   └── KioskLauncherActivity.kt   # Launcher substituto para modo kiosk
@@ -76,7 +78,7 @@ com.elion.mdm/
 
 ### MDMForegroundService — O Coração
 
-O serviço roda permanentemente em foreground (notificação persistente no Android 8+) e orquestra todo o ciclo de vida do MDM:
+O serviço roda permanentemente em foreground (notificação persistente) e orquestra todo o ciclo de vida do MDM. Compatível com **Android 15** usando `FOREGROUND_SERVICE_TYPE_SPECIAL_USE`.
 
 ```
 ┌────────────────────────────────────────────────────────────┐
@@ -100,10 +102,58 @@ O serviço roda permanentemente em foreground (notificação persistente no Andr
 ```
 
 **Loops simultâneos:**
-- **Check-in (60s):** Envia heartbeat + telemetria para o backend.
+- **Check-in (60s):** Envia heartbeat + telemetria completa (bateria, GPS, apps, armazenamento, foreground app).
 - **Command Poll (30s):** Busca comandos pendentes via REST (fallback do WS).
 - **WebSocket Client:** Canal em tempo real para comandos push.
 - **Kiosk Watchdog (15s):** Verifica se Lock Task Mode está ativo.
+
+---
+
+## Telemetria Enviada
+
+O agent coleta e envia os seguintes dados em cada check-in:
+
+| Dado | Descrição | Permissão Necessária |
+|---|---|---|
+| `battery_level` | Nível de bateria (%) | Nenhuma |
+| `is_charging` | Se está carregando | Nenhuma |
+| `device_model` | Fabricante + modelo | Nenhuma |
+| `android_version` | Versão do Android | Nenhuma |
+| `free_disk_space_mb` | Armazenamento livre (MB) | Nenhuma |
+| `installed_apps` | Lista de package names | Nenhuma |
+| `foreground_app` | App em primeiro plano | `PACKAGE_USAGE_STATS` |
+| `latitude` / `longitude` | Coordenadas GPS | `ACCESS_FINE_LOCATION` |
+| `imei` | IMEI do dispositivo | Device Owner |
+
+> **Nota:** O IMEI só é acessível quando o app é Device Owner. Sem Device Owner, o agent reporta todas as outras informações normalmente.
+
+---
+
+## Enrollment via ADB (Manual)
+
+O enrollment atual utiliza instalação manual via ADB:
+
+```bash
+# 1. Gere o APK no Android Studio (flavor: dev, build: debug)
+./gradlew assembleDevDebug
+
+# 2. Instale no dispositivo conectado
+adb install -r app/build/outputs/apk/dev/debug/app-dev-debug.apk
+
+# 3. Abra o app e preencha:
+#    - URL do Backend: http://<IP_DO_SERVIDOR>:8200
+#    - Bootstrap Secret: (valor do .env do servidor)
+
+# 4. Clique em "Sincronizar"
+# → O dispositivo será registrado e aparecerá no dashboard
+```
+
+**O que acontece no enrollment:**
+1. O agent coleta o modelo do celular e a lista de apps instalados.
+2. Envia tudo junto com o Bootstrap Secret para `POST /api/enroll`.
+3. O backend gera um token opaco e retorna ao agent.
+4. O agent persiste o token em `EncryptedSharedPreferences`.
+5. O `MDMForegroundService` inicia automaticamente e começa os loops de check-in.
 
 ---
 
@@ -115,29 +165,20 @@ O serviço roda permanentemente em foreground (notificação persistente no Andr
  ┌──────┐    ┌▼──────────┐    ┌────────────┐    ┌───────────┐  │
  │ INIT │───►│REGISTERING│───►│PROVISIONING│───►│ ENFORCING │──┘
  └──────┘    └───────────┘    └────────────┘    └─────┬─────┘
-   QR Scan      /enroll OK      Bootstrap OK        │    │
-                                                    │    │
-                                            Sucesso │    │ Falha
-                                                    ▼    ▼
-                                            ┌────────┐ ┌───────┐
-                                            │OPERATIO│ │ ERROR │
-                                            │  NAL   │ │       │
-                                            └───┬────┘ └───┬───┘
-                                                │          │
-                                                │  Retry   │
-                                          Drift │◄─────────┘
-                                        Detected│
-                                                └──► ENFORCING
+              /enroll OK       Bootstrap OK          │    │
+                                                     │    │
+                                             Sucesso │    │ Falha
+                                                     ▼    ▼
+                                             ┌────────┐ ┌───────┐
+                                             │OPERATIO│ │ ERROR │
+                                             │  NAL   │ │       │
+                                             └───┬────┘ └───┬───┘
+                                                 │          │
+                                                 │  Retry   │
+                                           Drift │◄─────────┘
+                                         Detected│
+                                                 └──► ENFORCING
 ```
-
-| Estado | Descrição | Transição |
-|---|---|---|
-| `INIT` | Dispositivo virgem, aguarda enrollment | → REGISTERING (QR scan) |
-| `REGISTERING` | Handshake de identidade em andamento | → PROVISIONING (enroll OK) |
-| `PROVISIONING` | Baixando Bootstrap SSOT | → ENFORCING (download OK) |
-| `ENFORCING` | Aplicando políticas deterministicamente | → OPERATIONAL / ERROR |
-| `OPERATIONAL` | Dispositivo gerenciado e compliant | → ENFORCING (drift detectado) |
-| `ERROR` | Falha com backoff exponencial | → ENFORCING (retry) / Cooldown 30min |
 
 ### Proteções Anti-Brick
 
@@ -156,77 +197,28 @@ O serviço roda permanentemente em foreground (notificação persistente no Andr
 |---|---|---|
 | `LOCK` | Bloqueia a tela imediatamente | ACK → EXECUTED → VERIFIED |
 | `WIPE` | Factory reset completo | ACK → EXECUTED → VERIFIED |
-| `UNLOCK` | Remove lock de tela | ACK → EXECUTED |
-| `SET_POLICY` | Atualiza políticas | ACK → EXECUTED |
+| `REBOOT` | Reinicia o dispositivo | ACK → EXECUTED |
 | `INSTALL_APP` | Instala APK silenciosamente | ACK → EXECUTED |
-| `UNINSTALL_APP` | Remove app | ACK → EXECUTED |
 | `ENABLE_KIOSK` | Ativa modo kiosk | ACK → EXECUTED |
 | `DISABLE_KIOSK` | Desativa modo kiosk | ACK → EXECUTED |
+| `DISABLE_CAMERA` | Bloqueia câmera | ACK → EXECUTED |
+| `ENABLE_CAMERA` | Libera câmera | ACK → EXECUTED |
 
 > Para a definição do protocolo de comandos no lado do servidor, veja o [README do Backend](../backend/README.md).
 
 ---
 
-## Segurança
+## Comunicação com o Backend
 
-### Play Integrity (Atestação de Hardware)
+### Conexão Direta (Sem Proxy)
 
-O agent integra a **Play Integrity API** do Google para provar que está rodando em um dispositivo Android legítimo:
+O agent se conecta **diretamente** ao backend Uvicorn:
 
-1. Agent solicita nonce assinado ao backend.
-2. Agent envia nonce para a SDK do Play Integrity.
-3. Google retorna token de integridade.
-4. Agent envia token ao backend para validação.
-5. Backend calcula Trust Score (0–100).
-
-### Modo Kiosk
-
-- **Watchdog (15s):** Verifica se Lock Task Mode está ativo.
-- **Anti-escape:** Se detectar saída, força re-entrada imediata via `KioskLauncherActivity`.
-- **Bloqueios:** Barra de notificações, navegação por botões, barra de status.
-
-### Armazenamento Seguro
-
-- Todas as credenciais (tokens, segredos) são persistidas via `EncryptedSharedPreferences`.
-- Estado da state machine protegido com checksum SHA-256.
-
----
-
-## Build e Provisionamento
-
-### Requisitos
-
-| Ferramenta | Versão Mínima |
-|---|---|
-| Android Studio | Hedgehog+ |
-| JDK | 17+ |
-| Gradle | 8.0+ |
-| Android SDK | API 28+ (Android 9) |
-
-### Build
-
-```bash
-cd android
-
-# Configurar local.properties com sdk.dir
-# sdk.dir=C:\\Users\\<user>\\AppData\\Local\\Android\\Sdk
-
-./gradlew assembleDebug
-# APK em: app/build/outputs/apk/debug/
+```
+Agent ──── HTTP/WS ───► http://<IP>:8200/api/...
 ```
 
-### Provisionamento como Device Owner
-
-1. **Factory reset** do dispositivo Android.
-2. Na tela de boas-vindas, toque 6x no ecrã para ativar o leitor QR.
-3. Escaneie o QR Code gerado pelo dashboard do Elion MDM.
-4. O dispositivo será provisionado automaticamente como Device Owner.
-
-> O QR Code contém: `profile_id`, `bootstrap_secret`, `api_url`.
-
----
-
-## Comunicação com o Backend
+Não há Nginx ou proxy reverso no caminho. A URL é configurável pela tela de enrollment e armazenada em `EncryptedSharedPreferences`.
 
 ### Protocolo Duplo (Resiliência)
 
@@ -240,10 +232,69 @@ cd android
 | Endpoint | Quando |
 |---|---|
 | `POST /api/enroll` | Durante enrollment inicial |
+| `POST /api/checkin` | Check-in periódico de telemetria (60s) |
 | `GET /api/devices/{id}/bootstrap` | Após enrollment (SSOT) |
-| `POST /api/devices/{id}/status` | Check-in periódico (60s) |
+| `POST /api/devices/{id}/status` | Report de saúde |
 | `POST /api/devices/{id}/policy/sync` | Verificação de drift |
 | `GET /api/devices/{id}/commands/pending` | Poll de comandos (30s) |
 | `POST /api/devices/{id}/commands/{id}/ack` | Confirmação de execução |
 | `GET /api/devices/nonce` | Solicitar nonce para atestação |
 | `POST /api/devices/attest` | Enviar token de integridade |
+
+---
+
+## Build
+
+### Requisitos
+
+| Ferramenta | Versão Mínima |
+|---|---|
+| Android Studio | Hedgehog+ |
+| JDK | 17+ |
+| Gradle | 8.0+ |
+| Android SDK | API 30+ (Android 11) |
+| Target SDK | API 35 (Android 15) |
+
+### Flavors
+
+| Flavor | `IS_DEV` | Logging | Uso |
+|---|---|---|---|
+| `dev` | `true` | Verbose (body completo) | Desenvolvimento e testes |
+| `prod` | `false` | Nenhum | Produção |
+
+### Compilando
+
+```bash
+cd android
+
+# Build debug (desenvolvimento)
+./gradlew assembleDevDebug
+# APK em: app/build/outputs/apk/dev/debug/
+
+# Build release (produção)
+./gradlew assembleProdRelease
+# APK em: app/build/outputs/apk/prod/release/
+```
+
+---
+
+## Segurança
+
+### Play Integrity (Atestação de Hardware)
+
+1. Agent solicita nonce assinado ao backend.
+2. Agent envia nonce para a SDK do Play Integrity.
+3. Google retorna token de integridade.
+4. Agent envia token ao backend para validação.
+5. Backend calcula Trust Score (0–100).
+
+### Armazenamento Seguro
+
+- Todas as credenciais (tokens, segredos) são persistidas via `EncryptedSharedPreferences`.
+- Estado da state machine protegido com checksum SHA-256.
+
+### Modo Kiosk
+
+- **Watchdog (15s):** Verifica se Lock Task Mode está ativo.
+- **Anti-escape:** Se detectar saída, força re-entrada imediata via `KioskLauncherActivity`.
+- **Bloqueios:** Barra de notificações, navegação por botões, barra de status.

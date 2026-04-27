@@ -14,6 +14,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import com.elion.mdm.R
 import com.elion.mdm.admin.AdminLoginActivity
 import com.elion.mdm.data.local.SecurePreferences
@@ -61,8 +62,25 @@ class KioskLauncherActivity : AppCompatActivity() {
     private lateinit var btnMenu: ImageView
     private lateinit var tvKioskBadge: TextView
     private lateinit var tvDevBanner: TextView
+    private var hasAutoLaunchedTarget = false
     private var devExitTapCount = 0
     private var lastDevExitTapMs = 0L
+
+    private val authLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val intent = Intent(this, AppSelectionActivity::class.java)
+            appSelectionLauncher.launch(intent)
+        }
+    }
+
+    private val appSelectionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val packageName = result.data?.getStringExtra("EXTRA_PACKAGE_NAME")
+            if (packageName != null) {
+                addAppToKiosk(packageName)
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -75,8 +93,11 @@ class KioskLauncherActivity : AppCompatActivity() {
         bindViews()
         setupDevModeUi()
         setupMenu()
+        setupFab()
+        setupAppGridSpacing()
         loadApps()
         enterKioskIfNeeded()
+        autoLaunchTargetIfNeeded()
 
         // 🛡️ Nível Enterprise Kiosk UI - Força fullscreen real
         enforceFullscreen()
@@ -162,7 +183,7 @@ class KioskLauncherActivity : AppCompatActivity() {
         tvKioskBadge.setTextColor(Color.WHITE)
         tvKioskBadge.setBackgroundColor(0xFFD32F2F.toInt())
         tvDevBanner.visibility = View.VISIBLE
-        tvDevBanner.text = "DEV MODE - soft kiosk, exit enabled"
+        tvDevBanner.text = "DEV MODE - soft kiosk, rede movel livre, segure para sair"
         tvKioskBadge.setOnClickListener { handleDevExitTap() }
         tvKioskBadge.setOnLongClickListener {
             exitKiosk()
@@ -200,12 +221,56 @@ class KioskLauncherActivity : AppCompatActivity() {
         }
     }
 
+    private fun setupFab() {
+        val fabAdd = findViewById<com.google.android.material.floatingactionbutton.FloatingActionButton>(R.id.fab_add_app)
+        fabAdd.setOnClickListener {
+            val intent = Intent(this, AdminLoginActivity::class.java)
+            intent.putExtra("EXTRA_ACTION", "ACTION_APP_SELECTION")
+            authLauncher.launch(intent)
+        }
+    }
+
+    private fun addAppToKiosk(packageName: String) {
+        if (packageName == this.packageName) return
+        
+        val allowed = getAllowedPackages().toMutableList()
+        if (!allowed.contains(packageName)) {
+            allowed.add(packageName)
+            
+            // Salvar no local storage do app MDM
+            val jsonArray = org.json.JSONArray()
+            allowed.forEach { jsonArray.put(it) }
+            prefs.allowedAppsJson = jsonArray.toString()
+            
+            // Atualizar whitelist do Android Lock Task (Device Policy Manager)
+            if (dpm.isDeviceOwner()) {
+                val dpmPackages = dpm.getKioskPackages().toMutableSet()
+                dpmPackages.add(packageName)
+                dpm.setKioskPackages(dpmPackages.toTypedArray())
+            }
+            
+            Toast.makeText(this, "App adicionado com sucesso!", Toast.LENGTH_SHORT).show()
+            loadApps()
+        } else {
+            Toast.makeText(this, "Esse app já está liberado.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     // ─── App Grid ─────────────────────────────────────────────────────────────
 
     private fun loadApps() {
         val allowedPackages = getAllowedPackages()
 
         if (allowedPackages.isEmpty()) {
+            tvEmpty.text = "Nenhum aplicativo permitido.\nContate o administrador."
+            tvEmpty.visibility = View.VISIBLE
+            rvApps.visibility = View.GONE
+            return
+        }
+
+        val apps = AllowedAppAdapter.loadApps(this, allowedPackages)
+        if (apps.isEmpty()) {
+            tvEmpty.text = "Nenhum app permitido instalado ou com launcher.\nVerifique o pacote alvo."
             tvEmpty.visibility = View.VISIBLE
             rvApps.visibility = View.GONE
             return
@@ -214,13 +279,23 @@ class KioskLauncherActivity : AppCompatActivity() {
         tvEmpty.visibility = View.GONE
         rvApps.visibility = View.VISIBLE
 
-        val apps = AllowedAppAdapter.loadApps(this, allowedPackages)
-
-        val spanCount = if (resources.configuration.screenWidthDp >= 600) 6 else 4
+        val spanCount = calculateSpanCount(minCellWidthDp = 96, maxSpanCount = 6)
         rvApps.layoutManager = GridLayoutManager(this, spanCount)
         rvApps.adapter = AllowedAppAdapter(this, apps) { appInfo ->
             launchApp(appInfo.packageName)
         }
+    }
+
+    private fun setupAppGridSpacing() {
+        if (rvApps.itemDecorationCount == 0) {
+            val spacingPx = (12 * resources.displayMetrics.density).toInt()
+            rvApps.addItemDecoration(GridSpacingItemDecoration(spacingPx))
+        }
+    }
+
+    private fun calculateSpanCount(minCellWidthDp: Int, maxSpanCount: Int): Int {
+        val screenWidthDp = resources.configuration.screenWidthDp.takeIf { it > 0 } ?: 360
+        return (screenWidthDp / minCellWidthDp).coerceIn(2, maxSpanCount)
     }
 
     private fun getAllowedPackages(): List<String> {
@@ -237,6 +312,54 @@ class KioskLauncherActivity : AppCompatActivity() {
         val intent = packageManager.getLaunchIntentForPackage(packageName) ?: return
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         startActivity(intent)
+    }
+
+    private fun autoLaunchTargetIfNeeded() {
+        if (!DevMode.isDevMode() || hasAutoLaunchedTarget || !prefs.isKioskEnabled) {
+            return
+        }
+
+        val targetPackage = resolveAutoLaunchTarget() ?: return
+        if (targetPackage == packageName) {
+            return
+        }
+
+        val launchIntent = packageManager.getLaunchIntentForPackage(targetPackage)
+        if (launchIntent == null) {
+            Log.w(TAG, "Pacote alvo do kiosk sem launcher: $targetPackage")
+            Toast.makeText(this, "App alvo do kiosk nao esta launchable", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        hasAutoLaunchedTarget = true
+        Log.i(TAG, "Soft kiosk DEV abrindo app alvo: $targetPackage")
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        startActivity(launchIntent)
+    }
+
+    private fun resolveAutoLaunchTarget(): String? {
+        prefs.kioskTargetPackage
+            ?.trim()
+            ?.takeIf { it.isNotBlank() && it != packageName }
+            ?.let { target ->
+                if (packageManager.getLaunchIntentForPackage(target) != null) {
+                    return target
+                }
+            }
+
+        val allowedPackages = getAllowedPackages()
+        if (allowedPackages.size != 1) {
+            return null
+        }
+
+        val onlyPackage = allowedPackages.first().trim()
+        if (onlyPackage.isBlank() || onlyPackage == packageName) {
+            return null
+        }
+
+        return onlyPackage.takeIf {
+            packageManager.getLaunchIntentForPackage(it) != null
+        }
     }
 
     // ─── Kiosk Lock Task ──────────────────────────────────────────────────────
@@ -281,6 +404,7 @@ class KioskLauncherActivity : AppCompatActivity() {
     fun exitKiosk() {
         prefs.isKioskEnabled = false
         prefs.mdmState = com.elion.mdm.domain.MdmState.ENROLLED
+        prefs.kioskTargetPackage = null
 
         if (DevMode.isDevMode()) {
             securityManager.stopWatchdog()

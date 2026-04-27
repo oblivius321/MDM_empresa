@@ -16,7 +16,12 @@ data class EnrollmentRequest(
     @SerializedName("name")             val name: String,
     @SerializedName("device_type")       val deviceType: String = "android",
     @SerializedName("bootstrap_token")  val bootstrapToken: String,
-    @SerializedName("extra_data")       val extraData: Map<String, String>? = null
+    @SerializedName("profile_id")       val profileId: String? = null,
+    @SerializedName("device_model")      val deviceModel: String? = null,
+    @SerializedName("android_version")   val androidVersion: String? = null,
+    @SerializedName("imei")              val imei: String? = null,
+    @SerializedName("installed_apps")    val installedApps: List<String>? = null,
+    @SerializedName("extra_data")        val extraData: Map<String, String>? = null
 )
 
 data class EnrollmentResponse(
@@ -28,11 +33,19 @@ data class EnrollmentResponse(
 // ─── Check-in ─────────────────────────────────────────────────────────────────
 
 data class CheckinRequest(
-    @SerializedName("battery_level")     val batteryLevel: Int,
-    @SerializedName("device_model")      val deviceModel: String,
-    @SerializedName("android_version")   val androidVersion: String,
-    @SerializedName("compliance_status") val complianceStatus: String,
-    @SerializedName("timestamp")         val timestamp: Long = System.currentTimeMillis()
+    @SerializedName("battery_level")       val batteryLevel: Int,
+    @SerializedName("is_charging")         val isCharging: Boolean = false,
+    @SerializedName("device_model")        val deviceModel: String,
+    @SerializedName("android_version")     val androidVersion: String,
+    @SerializedName("imei")                val imei: String? = null,
+    @SerializedName("serial")              val serial: String? = null,
+    @SerializedName("compliance_status")   val complianceStatus: String,
+    @SerializedName("free_disk_space_mb")  val freeDiskSpaceMb: Int? = null,
+    @SerializedName("installed_apps")      val installedApps: List<String>? = null,
+    @SerializedName("latitude")            val latitude: Double? = null,
+    @SerializedName("longitude")           val longitude: Double? = null,
+    @SerializedName("foreground_app")      val foregroundApp: String? = null,
+    @SerializedName("timestamp")           val timestamp: Long = System.currentTimeMillis()
 )
 
 data class CheckinResponse(

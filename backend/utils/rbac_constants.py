@@ -157,6 +157,7 @@ PERMISSIONS: List[Tuple[str, str, str, bool, bool]] = [
     ("devices:lock", "devices", "lock", True, False),  # Requer confirmação
     ("devices:unlock", "devices", "unlock", True, False),
     ("devices:wipe", "devices", "wipe", True, True),  # CRÍTICO: requer MFA
+    ("devices:reboot", "devices", "reboot", True, False),  # Requer confirmação
     ("devices:install_app", "devices", "install_app", False, False),
     ("devices:remove_app", "devices", "remove_app", False, False),
     
@@ -206,6 +207,7 @@ PERMISSION_GROUPS: Dict[str, List[str]] = {
         "devices:lock",
         "devices:unlock",
         "devices:wipe",
+        "devices:reboot",
         "devices:install_app",
         "devices:remove_app",
     ],

@@ -19,6 +19,11 @@ class KioskManager(private val context: Context) {
 
     fun enableKiosk(allowedPackages: List<String> = emptyList()) {
         Log.i(TAG, "Ativando modo kiosk (${DevMode.modeHeader()})...")
+        val cleanPackages = allowedPackages
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+        val targetPackage = resolveTargetPackage(cleanPackages)
 
         // 1. Check Enrollment
         if (prefs.mdmState == com.elion.mdm.domain.MdmState.UNCONFIGURED) {
@@ -27,7 +32,7 @@ class KioskManager(private val context: Context) {
         }
 
         // 2. Anti-Brick Protection
-        if (allowedPackages.isEmpty() && !DevMode.isDevMode()) {
+        if (cleanPackages.isEmpty() && !DevMode.isDevMode()) {
             Log.e(TAG, "Anti-Brick: Ativacao cancelada (nenhum app permitido)")
             return
         }
@@ -35,12 +40,16 @@ class KioskManager(private val context: Context) {
         if (DevMode.isDevMode()) {
             prefs.isKioskEnabled = true
             prefs.mdmState = com.elion.mdm.domain.MdmState.KIOSK_ACTIVE
+            prefs.kioskTargetPackage = targetPackage
 
             val array = JSONArray()
-            allowedPackages.distinct().forEach { array.put(it) }
+            cleanPackages.forEach { array.put(it) }
             prefs.allowedAppsJson = array.toString()
 
-            DevMode.log("Soft kiosk enabled; LockTask and system restrictions are disabled")
+            DevMode.log(
+                "Soft kiosk enabled; target=${targetPackage ?: "none"}; " +
+                    "LockTask and system restrictions are disabled"
+            )
             KioskLauncherActivity.launch(context)
             DevMode.showLaunchToast(context)
             return
@@ -53,12 +62,13 @@ class KioskManager(private val context: Context) {
 
         prefs.isKioskEnabled = true
         prefs.mdmState = com.elion.mdm.domain.MdmState.KIOSK_ACTIVE
+        prefs.kioskTargetPackage = targetPackage
 
         val array = JSONArray()
-        allowedPackages.distinct().forEach { array.put(it) }
+        cleanPackages.forEach { array.put(it) }
         prefs.allowedAppsJson = array.toString()
 
-        val packages = (allowedPackages + context.packageName).distinct().toTypedArray()
+        val packages = (cleanPackages + context.packageName).distinct().toTypedArray()
         dpm.setKioskPackages(packages)
             .onFailure { Log.e(TAG, "Falha ao definir Lock Task packages: ${it.message}") }
 
@@ -82,6 +92,7 @@ class KioskManager(private val context: Context) {
         Log.i(TAG, "Desativando modo kiosk...")
         prefs.isKioskEnabled = false
         prefs.mdmState = com.elion.mdm.domain.MdmState.ENROLLED
+        prefs.kioskTargetPackage = null
 
         if (DevMode.isDevMode()) {
             DevMode.emergencyExit(context)
@@ -116,5 +127,9 @@ class KioskManager(private val context: Context) {
         }
 
         enableKiosk(allowedPackages)
+    }
+
+    private fun resolveTargetPackage(allowedPackages: List<String>): String? {
+        return allowedPackages.firstOrNull { it != context.packageName }
     }
 }

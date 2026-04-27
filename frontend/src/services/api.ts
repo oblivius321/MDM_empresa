@@ -56,7 +56,7 @@ export function buildWebSocketUrl(path: string) {
     return path;
   }
 
-  // Se a BASE_URL for absoluta (ex: http://192...:8000), usamos o mesmo host/porta pro WS
+  // Se a BASE_URL for absoluta (ex: http://192...:8200), usamos o mesmo host/porta pro WS
   if (API_BASE_URL.startsWith('http')) {
     const url = new URL(API_BASE_URL);
     const wsProtocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -155,6 +155,12 @@ export interface Device {
   compliance_state?: PolicyState;
   merged_config?: any;
   last_enforced_at?: string;
+  last_apps_json?: string[];
+  battery_level?: number;
+  free_disk_space_mb?: number;
+  latitude?: number;
+  longitude?: number;
+  metadata_json?: any;
   events?: DeviceEvent[];
 }
 
@@ -393,6 +399,19 @@ export interface MergedPolicyPreview {
   hash: string;
 }
 
+export interface LegacyEnrollmentToken {
+  enrollment_token: string;
+  profile_id: string;
+  api_url: string;
+  profile_name: string;
+  mode: string;
+  max_devices: number;
+  ttl_minutes: number;
+  expires_at: string;
+  admin_component: string;
+  apk_url: string;
+  apk_checksum: string;
+}
 
 export const enrollmentService = {
   listProfiles: () =>
@@ -406,6 +425,19 @@ export const enrollmentService = {
 
   previewProfile: (id: string) =>
     api.get<MergedPolicyPreview>(`/profiles/${id}/preview`),
+
+  generateLegacyToken: (
+    profileId: string,
+    params: { mode?: 'single' | 'batch'; max_devices?: number; ttl_minutes?: number } = {}
+  ) =>
+    api.post<LegacyEnrollmentToken>('/enrollment/generate', null, {
+      params: {
+        profile_id: profileId,
+        mode: params.mode ?? 'single',
+        max_devices: params.max_devices ?? 1,
+        ttl_minutes: params.ttl_minutes ?? 15,
+      },
+    }),
 };
 
 // ─── Android Management API (Google DPC oficial) ─────────────────────────

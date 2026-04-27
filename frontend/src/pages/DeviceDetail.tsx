@@ -73,7 +73,21 @@ export default function DeviceDetail() {
   
   // ─── MDM Store & Websocket Sync ──────────────────────────────────────────
   const { complianceMap, handleComplianceUpdate } = useMDMStore();
-  const { device, telemetry, commands, loading, error, refresh, runAction, actionLoading, actionResult } = useDevice(id!);
+  const { device, telemetry: rawTelemetry, commands, loading, error, refresh, runAction, actionLoading, actionResult } = useDevice(id!);
+  
+  // Normalização de telemetria: Prioriza o histórico, mas aceita dados do device se necessário
+  const telemetry = useMemo(() => {
+    if (rawTelemetry) return rawTelemetry;
+    return {
+      battery_level: device?.battery_level ?? null,
+      installed_apps: device?.last_apps_json || [],
+      free_disk_space_mb: device?.free_disk_space_mb ?? null,
+      foreground_app: device?.metadata_json?.foreground_app || null,
+      latitude: device?.latitude ?? null,
+      longitude: device?.longitude ?? null,
+      is_charging: device?.metadata_json?.is_charging ?? false
+    };
+  }, [rawTelemetry, device]);
   
   // Local state for Policies V2
   const [isPolicyModalOpen, setIsPolicyModalOpen] = useState(false);
@@ -250,8 +264,10 @@ export default function DeviceDetail() {
               <InfoRow label="Empresa" value={device.company} />
               {device.last_checkin && (
                 <div className="mt-4 pt-4 border-t border-border/50">
-                   <p className="text-[9px] text-muted-foreground font-bold uppercase tracking-widest mb-1">Visto por último em</p>
-                   <p className="text-xs font-bold text-foreground">{format(parseISO(device.last_checkin), "dd/MM/yy 'às' HH:mm:ss", { locale: ptBR })}</p>
+            <InfoRow 
+              label="Visto por último" 
+              value={device.last_checkin ? format(parseISO(device.last_checkin.endsWith('Z') ? device.last_checkin : device.last_checkin + 'Z'), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR }) : 'Nunca'} 
+            />
                 </div>
               )}
             </div>
@@ -281,19 +297,24 @@ export default function DeviceDetail() {
                              <div className="space-y-1">
                                <p className="text-[9px] font-bold text-muted-foreground uppercase">Energia</p>
                                <div className="flex items-center gap-2 text-2xl font-black text-foreground">
-                                 {telemetry.battery_level}%
+                                 {telemetry.battery_level !== null && telemetry.battery_level !== undefined ? `${telemetry.battery_level}%` : '--'}
                                  {telemetry.is_charging ? <BatteryCharging className="w-5 h-5 text-status-syncing animate-pulse" /> : <Battery className="w-5 h-5" />}
                                </div>
                              </div>
                              <div className="space-y-1">
                                <p className="text-[9px] font-bold text-muted-foreground uppercase">Armazenamento Livre</p>
                                <div className="flex items-center gap-2 text-2xl font-black text-foreground">
-                                 {Math.floor((telemetry.free_disk_space_mb || 0) / 1024)} <span className="text-xs font-medium text-muted-foreground">GB</span>
+                                 {telemetry.free_disk_space_mb !== null && telemetry.free_disk_space_mb !== undefined 
+                                   ? Math.floor(telemetry.free_disk_space_mb / 1024) 
+                                   : '--'} 
+                                 <span className="text-xs font-medium text-muted-foreground">
+                                   {telemetry.free_disk_space_mb !== null && telemetry.free_disk_space_mb !== undefined ? 'GB' : ''}
+                                 </span>
                                </div>
                              </div>
                              <div className="col-span-2 p-3 bg-muted/40 rounded-xl border border-border/50">
                                 <p className="text-[9px] font-bold text-muted-foreground uppercase mb-2">App em Atividade</p>
-                                <p className="text-xs font-mono font-bold text-primary truncate">{telemetry.foreground_app || 'Nenhum app detectado'}</p>
+                                <p className="text-xs font-mono font-bold text-primary truncate">{telemetry.foreground_app || 'Não disponível'}</p>
                              </div>
                            </div>
                         ) : (
@@ -311,9 +332,10 @@ export default function DeviceDetail() {
                            <span className="text-[10px] font-bold uppercase tracking-tight">Geo-Posicionamento</span>
                         </div>
                         <div className="w-full h-full bg-muted/20 flex items-center justify-center">
-                           {telemetry?.location ? (
+                           {telemetry?.latitude !== null && telemetry?.longitude !== null && 
+                            telemetry?.latitude !== undefined && telemetry?.longitude !== undefined ? (
                               <div className="text-center p-8 bg-card/40 rounded-3xl border border-border backdrop-blur-sm">
-                                 <p className="text-xl font-black text-foreground">{telemetry.location.latitude.toFixed(6)}, {telemetry.location.longitude.toFixed(6)}</p>
+                                 <p className="text-xl font-black text-foreground">{telemetry.latitude.toFixed(6)}, {telemetry.longitude.toFixed(6)}</p>
                                  <p className="text-[10px] font-medium text-muted-foreground mt-2 uppercase tracking-widest">Coordenadas reportadas por GPS</p>
                               </div>
                            ) : (
@@ -330,16 +352,25 @@ export default function DeviceDetail() {
                            <LayoutGrid className="w-4 h-4 text-primary" />
                            <h3 className="text-sm font-bold uppercase tracking-tight">Inventário de Apps</h3>
                         </div>
-                        <Badge variant="outline" className="text-[10px] font-mono px-3">{telemetry?.installed_apps?.length || 0} instalados</Badge>
+                        <Badge variant="outline" className="text-[10px] font-mono px-3">
+                           {telemetry?.installed_apps?.length || device?.last_apps_json?.length || 0} instalados
+                        </Badge>
                      </div>
                      <ScrollArea className="h-48 rounded-xl border border-border/30 p-2 bg-muted/10">
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                          {telemetry?.installed_apps?.map((app: string, idx: number) => (
-                            <div key={idx} className="p-2 bg-card rounded-md border border-border/50 text-[10px] font-medium truncate flex items-center gap-2">
-                               <div className="w-1.5 h-1.5 rounded-full bg-secondary" />
-                               {app}
+                          {((Array.isArray(telemetry?.installed_apps) && telemetry.installed_apps.length > 0) || 
+                            (Array.isArray(device?.last_apps_json) && device.last_apps_json.length > 0)) ? (
+                            (telemetry?.installed_apps || device?.last_apps_json || []).map((app: string, idx: number) => (
+                              <div key={idx} className="p-2 bg-card rounded-md border border-border/50 text-[10px] font-medium truncate flex items-center gap-2">
+                                 <div className="w-1.5 h-1.5 rounded-full bg-secondary" />
+                                 {app}
+                              </div>
+                            ))
+                          ) : (
+                            <div className="col-span-full py-8 text-center">
+                               <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest opacity-40">Nenhum app reportado</p>
                             </div>
-                          ))}
+                          )}
                         </div>
                      </ScrollArea>
                   </div>

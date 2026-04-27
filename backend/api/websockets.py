@@ -71,10 +71,12 @@ class _PresenceStore:
         self._status: Dict[str, str] = {}
 
     def record_heartbeat(self, device_id: str):
+        from backend.core import utcnow
+        now_utc = utcnow()
         now = time.monotonic()
         self._last_heartbeat[device_id] = now
         self._last_hb_received[device_id] = now
-        self._last_seen_utc[device_id] = datetime.now(timezone.utc)
+        self._last_seen_utc[device_id] = now_utc
 
     def is_heartbeat_allowed(self, device_id: str) -> bool:
         """Flood protection: retorna False se o device enviou ping há menos de HEARTBEAT_MIN_INTERVAL segundos."""
@@ -207,7 +209,7 @@ class ConnectionManager:
             "type": "DEVICE_CONNECTED",
             "device_id": device_id,
             "status": "online",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": utcnow().isoformat(),
         })
 
     def is_device_online(self, device_id: str) -> bool:
@@ -263,7 +265,7 @@ class ConnectionManager:
                 "device_id": device_id,
                 "status": "offline",
                 "reason": reason,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": utcnow().isoformat(),
             })
         else:
             # Device já estava offline — sem broadcast redundante
@@ -282,7 +284,7 @@ class ConnectionManager:
                 repo = DeviceRepository(db)
                 last_seen = (
                     self.presence.get_last_seen_utc(device_id)
-                    or datetime.now(timezone.utc)
+                    or utcnow()
                 )
                 await repo.update_device(device_id, {
                     "status": status,

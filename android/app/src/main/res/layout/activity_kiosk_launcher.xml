@@ -1,103 +1,128 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- activity_kiosk_launcher.xml — Tela principal do Kiosk Launcher -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
     android:background="#0D1117"
     tools:context=".launcher.KioskLauncherActivity">
 
-    <!-- ─── Top Bar ──────────────────────────────────── -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:paddingStart="16dp"
-        android:paddingEnd="8dp"
-        android:background="#161B22">
+        android:layout_height="match_parent"
+        android:orientation="vertical">
 
-        <!-- Logo/Icon -->
-        <ImageView
-            android:id="@+id/iv_logo"
-            android:layout_width="28dp"
-            android:layout_height="28dp"
-            android:src="@mipmap/ic_launcher"
-            android:contentDescription="Elion Logo"/>
+        <!-- ─── Top Bar ──────────────────────────────────── -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="16dp"
+            android:paddingEnd="8dp"
+            android:background="#161B22">
 
-        <!-- Título -->
+            <!-- Logo/Icon -->
+            <ImageView
+                android:id="@+id/iv_logo"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:src="@mipmap/ic_launcher"
+                android:contentDescription="Elion Logo"/>
+
+            <!-- Título -->
+            <TextView
+                android:id="@+id/tv_kiosk_title"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:letterSpacing="0.05"
+                android:maxLines="1"
+                android:text="Elion Kiosk Ativado"
+                android:textColor="#FFFFFF"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <!-- Label KIOSK -->
+            <TextView
+                android:id="@+id/tv_kiosk_badge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="KIOSK"
+                android:textColor="#58A6FF"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.15"
+                android:background="@android:color/transparent"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="2dp"
+                android:layout_marginEnd="8dp"/>
+
+            <!-- Menu ⋮ -->
+            <ImageView
+                android:id="@+id/btn_menu"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:padding="8dp"
+                android:src="@android:drawable/ic_menu_more"
+                android:contentDescription="Menu"
+                android:background="?attr/selectableItemBackgroundBorderless"/>
+        </LinearLayout>
+
+        <!-- ─── Divisor ──────────────────────────────────── -->
         <TextView
-            android:layout_width="0dp"
+            android:id="@+id/tv_dev_banner"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginStart="12dp"
-            android:text="Elion"
+            android:background="#D32F2F"
+            android:gravity="center"
+            android:padding="10dp"
+            android:text="DEV MODE"
             android:textColor="#FFFFFF"
-            android:textSize="20sp"
             android:textStyle="bold"
-            android:letterSpacing="0.05"/>
+            android:visibility="gone" />
 
-        <!-- Label KIOSK -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#21262D"/>
+
+        <!-- ─── Mensagem vazia ────────────────────────────── -->
         <TextView
-            android:id="@+id/tv_kiosk_badge"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="KIOSK"
-            android:textColor="#58A6FF"
-            android:textSize="10sp"
-            android:textStyle="bold"
-            android:letterSpacing="0.15"
-            android:background="@android:color/transparent"
-            android:paddingHorizontal="8dp"
-            android:paddingVertical="2dp"
-            android:layout_marginEnd="8dp"/>
+            android:id="@+id/tv_empty"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:text="Nenhum aplicativo permitido.\nContate o administrador."
+            android:textColor="#8B949E"
+            android:textSize="14sp"
+            android:visibility="gone"/>
 
-        <!-- Menu ⋮ -->
-        <ImageView
-            android:id="@+id/btn_menu"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:padding="8dp"
-            android:src="@android:drawable/ic_menu_more"
-            android:contentDescription="Menu"
-            android:background="?attr/selectableItemBackgroundBorderless"/>
+        <!-- ─── Grid de Apps ──────────────────────────────── -->
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rv_apps"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:paddingStart="16dp"
+            android:paddingTop="16dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="96dp"
+            android:clipToPadding="false"/>
     </LinearLayout>
 
-    <!-- ─── Divisor ──────────────────────────────────── -->
-    <TextView
-        android:id="@+id/tv_dev_banner"
-        android:layout_width="match_parent"
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fab_add_app"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:background="#D32F2F"
-        android:gravity="center"
-        android:padding="10dp"
-        android:text="DEV MODE"
-        android:textColor="#FFFFFF"
-        android:textStyle="bold"
-        android:visibility="gone" />
+        android:layout_alignParentBottom="true"
+        android:layout_alignParentEnd="true"
+        android:layout_margin="24dp"
+        android:src="@android:drawable/ic_input_add"
+        app:backgroundTint="#58A6FF"
+        app:tint="#FFFFFF"
+        android:contentDescription="Adicionar App"/>
 
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="#21262D"/>
-
-    <!-- ─── Mensagem vazia ────────────────────────────── -->
-    <TextView
-        android:id="@+id/tv_empty"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:gravity="center"
-        android:text="Nenhum aplicativo permitido.\nContate o administrador."
-        android:textColor="#8B949E"
-        android:textSize="14sp"
-        android:visibility="gone"/>
-
-    <!-- ─── Grid de Apps ──────────────────────────────── -->
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/rv_apps"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:padding="16dp"
-        android:clipToPadding="false"/>
-</LinearLayout>
+</RelativeLayout>
